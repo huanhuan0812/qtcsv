@@ -1,2 +1,2 @@
-# qtsvg
-a svg model for qt
+# qtcsv
+a csv model for qt
