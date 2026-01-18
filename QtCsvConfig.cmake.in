@@ -1,0 +1,10 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Qt6 COMPONENTS Core)
+
+if(@QTCSV_WIDGETS@)
+    find_dependency(Qt6 COMPONENTS Widgets)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/QtCsvTargets.cmake")
