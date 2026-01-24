@@ -43,6 +43,10 @@ public:
     void saveAs(QString filePath);
     void clear();
     void sync();
+    void atomicSave();
+    void atomicSaveAs(QString filePath); // 原子保存
+
+    void finalize(); // 保存并关闭文件
 
     QString getValue(const QString& key) const;
     QList<QString> search(QString index) const;

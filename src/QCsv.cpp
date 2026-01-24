@@ -4,6 +4,48 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cstring>
+#include <QFile>
+#include <QSaveFile>
+#include <QtConcurrent/QtConcurrent>
+#include <QFuture>
+
+QCsv::QCsv(QString filePath, QObject* parent)
+    : QObject(parent), filePath(filePath), opened(false) {
+    
+    open(filePath);
+}
+
+QCsv::~QCsv() {
+    if (isOpen()) {
+        close();
+    }
+}
+
+void QCsv::open(QString filePath) {
+    if(filePath.isEmpty()) {
+        throw std::runtime_error("File path cannot be empty");
+    }
+    this->filePath = filePath;
+    QFile file(filePath);
+    if (!file.exists()) {
+        std::ofstream file(filePath.toStdString());
+        if(!file) {
+            throw std::runtime_error("Failed to create file: " + filePath.toStdString());
+        }
+        file.close();
+    }
+    opened = true;
+}
+
+void QCsv::close() {
+    if (!isOpen()) {
+        throw std::runtime_error("File is not open");
+    }
+    //save();
+    filePath.clear();
+    opened = false;
+    clear();
+}
 
 QString QCsv::numberToColumnRow(int number) const {
     QString column;
@@ -124,6 +166,42 @@ void CsvParser::processChar(char ch) {
                 currentCell.append(ch);
                 state = STATE_NORMAL;
             }
+            break;
+        case STATE_END_OF_CELL:
+            // 从单元格结束状态恢复到正常状态
+            if (ch == separator) {
+                endCell();
+            } else if (ch == '\n') {
+                endRow();
+                state = STATE_END_OF_ROW;
+            } else if (ch == '\r') {
+                pendingCR = true;
+                endRow();
+                state = STATE_END_OF_ROW;
+            } else {
+                currentCell.append(ch);
+                state = STATE_NORMAL;
+            }
+            break;
+        case STATE_END_OF_ROW:
+            // 从行结束状态恢复到正常状态
+            if (ch == separator) {
+                endCell();
+                state = STATE_END_OF_CELL;
+            } else if (ch == '\n') {
+                endRow();
+            } else if (ch == '\r') {
+                pendingCR = true;
+                endRow();
+            } else if (ch == '"') {
+                currentCell.append(ch);
+                state = STATE_IN_QUOTES;
+            } else {
+                currentCell.append(ch);
+                state = STATE_NORMAL;
+            }
+            break;
+        default:
             break;
     }
 }
@@ -351,14 +429,99 @@ void QCsv::saveAs(QString newFilePath) {
     file.close();
 }
 
+void QCsv::atomicSave() {
+    atomicSaveAs(filePath);
+}
+
+void QCsv::atomicSaveAs(QString filePath) {
+    QSaveFile saveFile(filePath);
+    if (!saveFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        throw std::runtime_error("Could not open file for atomic saving");
+    }
+
+    // 找出最大行和列
+    int maxRow = 0;
+    int maxCol = 0;
+
+    for (auto it = csvModel.begin(); it != csvModel.end(); ++it) {
+        QString key = it.key();
+        // 解析Excel样式的键，如"A1"
+        QString colStr;
+        int row = 0;
+
+        for (int i = 0; i < key.length(); ++i) {
+            if (key[i].isLetter()) {
+                colStr.append(key[i]);
+            } else if (key[i].isDigit()) {
+                row = row * 10 + key[i].digitValue();
+            }
+        }
+
+        maxRow = std::max(maxRow, row);
+
+        // 转换列字母为数字
+        int col = 0;
+        for (int i = 0; i < colStr.length(); ++i) {
+            col = col * 26 + (colStr[i].toLatin1() - 'A' + 1);
+        }
+        maxCol = std::max(maxCol, col);
+    }
+
+    // 写入CSV文件
+    QTextStream out(&saveFile);
+    for (int row = 1; row <= maxRow; ++row) {
+        for (int col = 1; col <= maxCol; ++col) {
+            // 转换列号回字母
+            QString colStr = numberToColumnRow(col - 1);
+            QString key = colStr + QString::number(row);
+
+            // 获取单元格值（如果不存在于csvModel中，则为空）
+            QString value = csvModel.value(key, "");
+
+            // 需要引号的情况：包含分隔符、引号或换行符
+            bool needsQuotes = value.contains(separator) || 
+                              value.contains('"') || 
+                              value.contains('\n') || 
+                              value.contains('\r');
+
+            if (needsQuotes) {
+                // 转义引号
+                value.replace("\"", "\"\"");
+                out << "\"" << value << "\"";
+            } else {
+                out << value;
+            }
+
+            if (col < maxCol) {
+                out << separator;
+            }
+        }
+        out << "\n";
+    }
+    if (!saveFile.commit()) {
+        throw std::runtime_error("Could not commit atomic save");
+    }
+}
+
 void QCsv::clear() {
     csvModel.clear();
     searchModel.clear();
 }
 
 void QCsv::sync() {
-    // 简单实现：重新保存
+    QFuture<void> future = QtConcurrent::run([this]() {
+        try {
+            save();
+        } catch (const std::exception& e) {
+            qWarning() << "Error during sync:" << e.what();
+        }
+    });
+    Q_UNUSED(future);
+}
+
+void QCsv::finalize() {
     save();
+    close();
 }
 
 void QCsv::setSeparator(char sep) {

@@ -67,7 +67,6 @@ if(QTCSV_WIDGETS)
     )
 endif()
 
-# 可选：如果支持测试
 option(BUILD_TESTING "Build tests" OFF)
 if(BUILD_TESTING)
     enable_testing()
@@ -77,10 +76,7 @@ if(BUILD_TESTING)
     
     # 添加测试可执行文件
     add_executable(qtcsv_test
-        tests/testcsvreader.cpp
-        tests/testcsvwriter.cpp
-        tests/testcsvprocessor.cpp
-        tests/testmain.cpp
+        tests/test.cpp
     )
     
     target_link_libraries(qtcsv_test PRIVATE
