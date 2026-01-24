@@ -4,9 +4,6 @@ A CSV model for Qt
 
 ---
 
-# qtcsv
-
-一个用于 Qt 的 CSV 模型库
 
 ## 简介 | Introduction
 
@@ -67,6 +64,34 @@ csv.close();
 - `void setValue(const QString& key, const QString& value)`  设置值 | Set value
 - `void setSeparator(char sep)`  设置分隔符 | Set separator
 - `char getSeparator() const`  获取分隔符 | Get separator
+
+## ⚠️ 流处理说明（不完整）
+
+qtcsv 计划支持基于流的 CSV 读写接口 `QCsv& operator>>(QCsv& csv, QString& value)`，适用于大文件或分块处理场景。
+
+- 目标：避免一次性加载全部数据到内存，提升性能与可扩展性。
+- 设计思路：
+  - 提供逐行读取、写入接口
+  - 支持自定义缓冲区大小
+  - 兼容现有的键值访问模式
+- 当前状态：
+  - 该功能尚在设计与实验阶段，接口和实现可能会有较大调整。
+  - 欢迎提出建议或参与贡献。
+
+---
+
+## Stream Processing (Incomplete)
+
+qtcsv plans to support stream-based CSV read/write interfaces (`QCsv& operator>>(QCsv& csv, QString& value)`) for large files or chunked processing.
+
+- Goal: Avoid loading all data into memory at once, improve performance and scalability.
+- Design ideas:
+  - Provide line-by-line read/write APIs
+  - Support custom buffer size
+  - Compatible with current key-value access
+- Status:
+  - This feature is under design and experimentation, APIs and implementation may change.
+  - Suggestions and contributions are welcome.
 
 ## 许可证 | License
 

@@ -16,8 +16,15 @@ QCsv::QCsv(QString filePath, QObject* parent)
 }
 
 QCsv::~QCsv() {
-    if (isOpen()) {
-        close();
+    try {
+        if (isOpen()) {
+            close();
+        }
+        closeStream();
+    } catch (const std::exception& e) {
+        qWarning() << "Error in QCsv destructor: " << e.what();
+    } catch (...) {
+        qWarning() << "Unknown error in QCsv destructor";
     }
 }
 
@@ -45,70 +52,7 @@ void QCsv::close() {
     filePath.clear();
     opened = false;
     clear();
-}
-
-QString QCsv::numberToColumnRow(int number) const {
-    QString column;
-    number++; // 从0-based转为1-based（A=1）
-    while (number > 0) {
-        int colNum = (number - 1) % 26;
-        column.prepend(QChar('A' + colNum));
-        number = (number - 1) / 26;
-    }
-    return column;
-}
-
-// CSV解析状态机
-class CsvParser {
-public:
-    enum State {
-        STATE_NORMAL,
-        STATE_IN_QUOTES,
-        STATE_QUOTE_IN_QUOTES,
-        STATE_END_OF_CELL,
-        STATE_END_OF_ROW
-    };
-
-    CsvParser(QHash<QString, QString>& csvModel, 
-              QMultiMap<QString, QString>& searchModel,
-              char separator)
-        : csvModel(csvModel), searchModel(searchModel), separator(separator) {}
-
-    void parse(const char* data, size_t size, bool isFinal = false);
-    void finalize();
-
-private:
-    QHash<QString, QString>& csvModel;
-    QMultiMap<QString, QString>& searchModel;
-    char separator;
-    
-    int currentRow = 0;
-    int currentCol = 0;
-    QString currentCell;
-    State state = STATE_NORMAL;
-    bool pendingCR = false; // 处理\r\n换行符
-    
-    void processChar(char ch);
-    void endCell();
-    void endRow();
-    
-    void insertCell();
-    QString numberToColumnRow(int number) const;
-    
-    // 用于跟踪最大行列
-    int maxRow = 0;
-    int maxCol = 0;
-};
-
-QString CsvParser::numberToColumnRow(int number) const {
-    QString column;
-    number++; // 从0-based转为1-based（A=1）
-    while (number > 0) {
-        int colNum = (number - 1) % 26;
-        column.prepend(QChar('A' + colNum));
-        number = (number - 1) / 26;
-    }
-    return column;
+    closeStream();
 }
 
 void CsvParser::processChar(char ch) {
@@ -235,7 +179,7 @@ void CsvParser::endRow() {
 
 void CsvParser::insertCell() {
     QString key = QString("%1%2").arg(
-        this->numberToColumnRow(currentCol)).arg(currentRow + 1);
+        CsvUtils::numberToColumnRow(currentCol)).arg(currentRow + 1);
     
     // 只在单元格不为空时才存储
     if (!currentCell.isEmpty()) {
@@ -379,7 +323,7 @@ void QCsv::saveAs(QString newFilePath) {
         // 转换列字母为数字
         int col = 0;
         for (int i = 0; i < colStr.length(); ++i) {
-            col = col * 26 + (colStr[i].toLatin1() - 'A' + 1);
+            col = col * 26 + (colStr[i].toUpper().toLatin1() - 'A' + 1);
         }
         maxCol = std::max(maxCol, col);
     }
@@ -399,7 +343,7 @@ void QCsv::saveAs(QString newFilePath) {
     for (int row = 1; row <= maxRow; ++row) {
         for (int col = 1; col <= maxCol; ++col) {
             // 转换列号回字母
-            QString colStr = numberToColumnRow(col - 1);
+            QString colStr = CsvUtils::numberToColumnRow(col - 1);
             QString key = colStr + QString::number(row);
             
             // 获取单元格值（如果不存在于csvModel中，则为空）
@@ -462,7 +406,7 @@ void QCsv::atomicSaveAs(QString filePath) {
         // 转换列字母为数字
         int col = 0;
         for (int i = 0; i < colStr.length(); ++i) {
-            col = col * 26 + (colStr[i].toLatin1() - 'A' + 1);
+            col = col * 26 + (colStr[i].toUpper().toLatin1() - 'A' + 1);
         }
         maxCol = std::max(maxCol, col);
     }
@@ -472,7 +416,7 @@ void QCsv::atomicSaveAs(QString filePath) {
     for (int row = 1; row <= maxRow; ++row) {
         for (int col = 1; col <= maxCol; ++col) {
             // 转换列号回字母
-            QString colStr = numberToColumnRow(col - 1);
+            QString colStr = CsvUtils::numberToColumnRow(col - 1);
             QString key = colStr + QString::number(row);
 
             // 获取单元格值（如果不存在于csvModel中，则为空）
@@ -537,3 +481,151 @@ void QCsv::setSeparator(char sep) {
 char QCsv::getSeparator() const {
     return separator;
 }
+
+QCsv& operator>>(QCsv& csv, QString& value) {
+    if (!csv.fileStream) {
+        csv.openStream();
+    }
+    
+    if (csv.atEnd) {
+        value.clear();
+        return csv;
+    }
+    
+    bool success = csv.readNextCell(value);
+    if (!success) {
+        csv.atEnd = true;
+        value.clear();
+    }
+    
+    return csv;
+}
+
+void QCsv::openStream() {
+    if (fileStream) {
+        return; // 已经打开
+    }
+    try{
+        fileStream = new std::ifstream(filePath.toStdString(), std::ios::binary);
+        if (!fileStream->is_open()) {
+            delete fileStream;
+            fileStream = nullptr;
+            throw std::runtime_error("Could not open file stream: " + filePath.toStdString());
+        }
+    }catch(...){
+        if (fileStream) {
+            delete fileStream;
+            fileStream = nullptr;
+        }
+        throw;
+    }
+    currentRow = 0;
+    currentCol = 0;
+    currentCell.clear();
+    state = CsvParser::STATE_NORMAL;
+    pendingCR = false;
+    atEnd = false;
+}
+
+void QCsv::closeStream() {
+    if (fileStream) {
+        fileStream->close();
+        delete fileStream;
+        fileStream = nullptr;
+    }
+}
+
+bool QCsv::readNextCell(QString& result){
+    if (!fileStream || !fileStream->is_open()) {
+        return false;
+    }
+    
+    result.clear();
+    currentCell.clear();
+    
+    char ch;
+    while (fileStream->get(ch)) {
+        switch (state) {
+            case CsvParser::STATE_NORMAL:
+                if (ch == '"') {
+                    state = CsvParser::STATE_IN_QUOTES;
+                } else if (ch == separator) {
+                    endCell();
+                    result = currentCell;
+                    return true;
+                } else if (ch == '\n') {
+                    if (pendingCR) {
+                        pendingCR = false;
+                    } else {
+                        endCell();
+                        endRow();
+                        result = currentCell;
+                        return true;
+                    }
+                } else if (ch == '\r') {
+                    pendingCR = true;
+                    endCell();
+                    endRow();
+                    result = currentCell;
+                    return true;
+                } else {
+                    currentCell.append(ch);
+                }
+                break;
+                
+            case CsvParser::STATE_IN_QUOTES:
+                if (ch == '"') {
+                    state = CsvParser::STATE_QUOTE_IN_QUOTES;
+                } else {
+                    currentCell.append(ch);
+                }
+                break;
+                
+            case CsvParser::STATE_QUOTE_IN_QUOTES:
+                if (ch == '"') {
+                    currentCell.append('"');
+                    state = CsvParser::STATE_IN_QUOTES;
+                } else if (ch == separator) {
+                    endCell();
+                    result = currentCell;
+                    return true;
+                } else if (ch == '\n') {
+                    endCell();
+                    endRow();
+                    result = currentCell;
+                    return true;
+                } else if (ch == '\r') {
+                    pendingCR = true;
+                    endCell();
+                    endRow();
+                    result = currentCell;
+                    return true;
+                } else {
+                    currentCell.append(ch);
+                    state = CsvParser::STATE_NORMAL;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+    
+    // 处理文件结束
+    if (!currentCell.isEmpty() || state != CsvParser::STATE_NORMAL) {
+        QCsv::endCell();
+        result = currentCell;
+        return true;
+    }
+    
+    return false; // 没有更多数据
+}
+
+void QCsv::endCell() const {
+    currentCol++;
+}
+
+void QCsv::endRow() const {
+    currentRow++;
+    currentCol = 0;
+}
+

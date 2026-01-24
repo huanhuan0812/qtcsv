@@ -27,12 +27,79 @@
 
 //key example "A1" like in Excel
 
+
+// 添加静态辅助函数
+namespace CsvUtils {
+    static QString numberToColumnRow(int number) {
+        QString column;
+        number++;
+        while (number > 0) {
+            int colNum = (number - 1) % 26;
+            column.prepend(QChar('A' + colNum));
+            number = (number - 1) / 26;
+        }
+        return column;
+    }
+    
+    static int columnRowToNumber(const QString& column) {
+        int col = 0;
+        for (int i = 0; i < column.length(); ++i) {
+            col = col * 26 + (column[i].toUpper().toLatin1() - 'A' + 1);
+        }
+        return col - 1; // 转为0-based
+    }
+}
+
+// CSV解析状态机
+class CsvParser {
+public:
+    enum State {
+        STATE_NORMAL,
+        STATE_IN_QUOTES,
+        STATE_QUOTE_IN_QUOTES,
+        STATE_END_OF_CELL,
+        STATE_END_OF_ROW
+    };
+
+    CsvParser(QHash<QString, QString>& csvModel, 
+              QMultiMap<QString, QString>& searchModel,
+              char separator)
+        : csvModel(csvModel), searchModel(searchModel), separator(separator) {}
+
+    void parse(const char* data, size_t size, bool isFinal = false);
+    void finalize();
+
+private:
+    QHash<QString, QString>& csvModel;
+    QMultiMap<QString, QString>& searchModel;
+    char separator;
+    
+    int currentRow = 0;
+    int currentCol = 0;
+    QString currentCell;
+    State state = STATE_NORMAL;
+    bool pendingCR = false; // 处理\r\n换行符
+    
+    void processChar(char ch);
+    void endCell();
+    void endRow();
+    
+    void insertCell();
+    
+    // 用于跟踪最大行列
+    int maxRow = 0;
+    int maxCol = 0;
+};
+
 class QTCSV_EXPORT QCsv : public QObject {
     Q_OBJECT
 public:
     //QCsv(QObject* parent = nullptr);
     QCsv(QString filePath, QObject* parent = nullptr);
     ~QCsv();
+
+    QCsv(QCsv&& other) noexcept;
+    QCsv& operator=(QCsv&& other) noexcept;
 
     void open(QString filePath);
     void close();
@@ -56,11 +123,39 @@ public:
     void setSeparator(char sep);
     char getSeparator() const;
 
+    QString getFilePath() const { return filePath; }
+    
+    friend QCsv& operator>>(QCsv& csv, QString& value);
+        
+    
+
+
 private:
     QString filePath;
     QHash<QString, QString> csvModel;
     QMultiMap<QString, QString> searchModel;
     char separator = ',';
     bool opened = false;
-    QString numberToColumnRow(int number) const;
+
+    // 添加用于流式读取的私有成员
+    mutable std::ifstream* fileStream = nullptr;
+    mutable int currentRow = 0;
+    mutable int currentCol = 0;
+    mutable QString currentCell;
+    mutable CsvParser::State state = CsvParser::STATE_NORMAL;
+    mutable bool pendingCR = false;
+    mutable bool atEnd = false;
+    
+    // 用于流式读取的辅助函数
+    void openStream();
+    void closeStream();
+    bool readNextCell(QString& result);
+    void endCell() const;
+    void endRow() const;
+
+    //TODO: add these functions if needed
+
+    //bool seekToCell(int targetRow, int targetCol) const;
+    //bool readCell(QString& result) const;
+    
 };
