@@ -65,33 +65,35 @@ csv.close();
 - `void setSeparator(char sep)`  设置分隔符 | Set separator
 - `char getSeparator() const`  获取分隔符 | Get separator
 
-## ⚠️ 流处理说明（不完整）
+## ⚠️ 流处理说明（部分实现，计划中）
 
-qtcsv 计划支持基于流的 CSV 读写接口 `QCsv& operator>>(QCsv& csv, QString& value)`，适用于大文件或分块处理场景。
+qtcsv 已初步实现基于流的 CSV 读写接口 `QCsv& operator>>(QCsv& csv, QString& value)`，适用于大文件或分块处理场景。
 
-- 目标：避免一次性加载全部数据到内存，提升性能与可扩展性。
-- 设计思路：
-  - 提供逐行读取、写入接口
-  - 支持自定义缓冲区大小
+- 已实现：
+  - 支持逐行、逐单元格流式读取
   - 兼容现有的键值访问模式
+- 计划：
+  - 支持流式读取指定行列（如 seekToCell、readCell 等接口）
+  - 提升大文件随机访问性能
+  - 丰富流式写入能力
 - 当前状态：
-  - 该功能尚在设计与实验阶段，接口和实现可能会有较大调整。
-  - 欢迎提出建议或参与贡献。
+  - 部分流处理功能已可用，指定位置流读取等高级功能正在设计和开发中。
 
 ---
 
-## Stream Processing (Incomplete)
+## Stream Processing (Partially Implemented & Planned)
 
-qtcsv plans to support stream-based CSV read/write interfaces (`QCsv& operator>>(QCsv& csv, QString& value)`) for large files or chunked processing.
+qtcsv has implemented basic stream-based CSV read/write interfaces (`QCsv& operator>>(QCsv& csv, QString& value)`), suitable for large files or chunked processing.
 
-- Goal: Avoid loading all data into memory at once, improve performance and scalability.
-- Design ideas:
-  - Provide line-by-line read/write APIs
-  - Support custom buffer size
+- Implemented:
+  - Line-by-line and cell-by-cell stream reading
   - Compatible with current key-value access
+- Planned:
+  - Stream reading at specified row/column (e.g., seekToCell, readCell APIs)
+  - Improve random access performance for large files
+  - Enhance stream writing capabilities
 - Status:
-  - This feature is under design and experimentation, APIs and implementation may change.
-  - Suggestions and contributions are welcome.
+  - Some stream processing features are available; advanced features like random access are under design and development.
 
 ## 许可证 | License
 

@@ -25,6 +25,8 @@
     #define QTCSV_EXPORT
 #endif
 
+#define EXPERIMENTAL_FUNC 0
+
 //key example "A1" like in Excel
 
 
@@ -94,7 +96,6 @@ private:
 class QTCSV_EXPORT QCsv : public QObject {
     Q_OBJECT
 public:
-    //QCsv(QObject* parent = nullptr);
     QCsv(QString filePath, QObject* parent = nullptr);
     ~QCsv();
 
@@ -137,25 +138,32 @@ private:
     char separator = ',';
     bool opened = false;
 
-    // 添加用于流式读取的私有成员
-    mutable std::ifstream* fileStream = nullptr;
     mutable int currentRow = 0;
     mutable int currentCol = 0;
     mutable QString currentCell;
     mutable CsvParser::State state = CsvParser::STATE_NORMAL;
     mutable bool pendingCR = false;
     mutable bool atEnd = false;
+
+    std::unique_ptr<std::ifstream> fileStream;
+    std::vector<char> buffer;
+    size_t bufferPos = 0;
+    size_t bufferSize = 0;
+    const size_t BUFFER_SIZE = 16384; 
     
     // 用于流式读取的辅助函数
     void openStream();
     void closeStream();
+    void resetStream();
     bool readNextCell(QString& result);
-    void endCell() const;
-    void endRow() const;
+    inline void endCell() const;
+    inline void endRow() const;
+    bool getNextChar(char& ch);
+    void apppendToCurrentCell(char ch);
 
     //TODO: add these functions if needed
 
-    //bool seekToCell(int targetRow, int targetCol) const;
+    bool seekToCell(int targetRow, int targetCol);
     //bool readCell(QString& result) const;
     
 };
