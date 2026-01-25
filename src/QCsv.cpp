@@ -737,15 +737,13 @@ bool QCsv::seekToCell(int targetRow, int targetCol) {
     
     QString cellValue;
 
-    while (currentRow < targetRow) {
+    while (currentRow <= targetRow) {
         currentCol = 0;
         while (currentCol <= targetCol) {
             if (!readNextCell(cellValue)) {
                 return false; // 到达文件末尾
             }
-            currentCol++;
         }
-        currentRow++;
     }
     
     return true;

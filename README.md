@@ -38,8 +38,7 @@ qtcsv is a lightweight CSV file read/write and management library developed with
 ```cpp
 #include "QCsv.hpp"
 
-QCsv csv("data.csv");
-csv.open("data.csv");
+QCsv csv("data.csv",this);
 csv.setValue("A1", "Hello");
 csv.save();
 csv.close();
@@ -78,6 +77,12 @@ qtcsv 已初步实现基于流的 CSV 读写接口 `QCsv& operator>>(QCsv& csv, 
   - 丰富流式写入能力
 - 当前状态：
   - 部分流处理功能已可用，指定位置流读取等高级功能正在设计和开发中。
+- 使用方式
+  ```cpp
+      ...
+  QString index;
+  csv>>index;
+  ```
 
 ---
 
