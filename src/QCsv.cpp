@@ -49,7 +49,6 @@ QCsv::QCsv(QCsv&& other) noexcept
     other.filePath.clear();
     other.opened = false;
 
-    other.deleteLater();
 }
 
 void QCsv::open(QString filePath) {
@@ -205,6 +204,10 @@ void CsvParser::insertCell() {
     QString key = QString("%1%2").arg(
         CsvUtils::numberToColumnRow(currentCol)).arg(currentRow + 1);
     
+    //存储最大行列
+    maxRow = std::max(maxRow, currentRow + 1);
+    maxCol = std::max(maxCol, currentCol + 1);
+
     // 只在单元格不为空时才存储
     if (!currentCell.isEmpty()) {
         csvModel.insert(key, currentCell);
@@ -309,6 +312,12 @@ void QCsv::setValue(const QString& key, const QString& value) {
         csvModel.insert(key, value);
         // 添加到搜索索引
         searchModel.insert(value, key);
+
+        // 更新最大行列
+        auto [colPart, rowPart] = CsvUtils::splitKey(key);
+        maxRow = std::max(maxRow, rowPart + 1);
+        maxCol = std::max(maxCol, CsvUtils::columnRowToNumber(colPart) + 1);
+        
     }
 }
 
@@ -326,40 +335,6 @@ void QCsv::save() {
 void QCsv::saveAs(QString newFilePath) {
     if (newFilePath.isEmpty()) {
         throw std::runtime_error("File path cannot be empty for saving");
-    }
-
-    // 找出最大行和列
-    int maxRow = 0;
-    int maxCol = 0;
-    
-    for (auto it = csvModel.begin(); it != csvModel.end(); ++it) {
-        QString key = it.key();
-        // 解析Excel样式的键，如"A1"
-        QString colStr;
-        int row = 0;
-        
-        for (int i = 0; i < key.length(); ++i) {
-            if (key[i].isLetter()) {
-                colStr.append(key[i]);
-            } else if (key[i].isDigit()) {
-                row = row * 10 + key[i].digitValue();
-            }
-        }
-        
-        maxRow = std::max(maxRow, row);
-        
-        // 转换列字母为数字
-        int col = 0;
-        for (int i = 0; i < colStr.length(); ++i) {
-            col = col * 26 + (colStr[i].toUpper().toLatin1() - 'A' + 1);
-        }
-        maxCol = std::max(maxCol, col);
-    }
-    
-    // 如果csvModel为空，写入空文件
-    if (csvModel.isEmpty() && maxRow == 0 && maxCol == 0) {
-        maxRow = 1;
-        maxCol = 1;
     }
     
     // 写入CSV文件
@@ -412,34 +387,6 @@ void QCsv::atomicSaveAs(QString filePath) {
     QSaveFile saveFile(filePath);
     if (!saveFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
         throw std::runtime_error("Could not open file for atomic saving");
-    }
-
-    // 找出最大行和列
-    int maxRow = 0;
-    int maxCol = 0;
-
-    for (auto it = csvModel.begin(); it != csvModel.end(); ++it) {
-        QString key = it.key();
-        // 解析Excel样式的键，如"A1"
-        QString colStr;
-        int row = 0;
-
-        for (int i = 0; i < key.length(); ++i) {
-            if (key[i].isLetter()) {
-                colStr.append(key[i]);
-            } else if (key[i].isDigit()) {
-                row = row * 10 + key[i].digitValue();
-            }
-        }
-
-        maxRow = std::max(maxRow, row);
-
-        // 转换列字母为数字
-        int col = 0;
-        for (int i = 0; i < colStr.length(); ++i) {
-            col = col * 26 + (colStr[i].toUpper().toLatin1() - 'A' + 1);
-        }
-        maxCol = std::max(maxCol, col);
     }
 
     // 写入CSV文件
@@ -673,7 +620,7 @@ bool QCsv::readNextCell(QString& result){
     
     // 处理文件结束
     if (!currentCell.isEmpty() || state != CsvParser::STATE_NORMAL) {
-        QCsv::endCell();
+        endCell();
         result = currentCell;
         return true;
     }
@@ -681,11 +628,11 @@ bool QCsv::readNextCell(QString& result){
     return false; // 没有更多数据
 }
 
-inline void QCsv::endCell() const {
+inline void QCsv::endCell(){
     currentCol++;
 }
 
-inline void QCsv::endRow() const {
+inline void QCsv::endRow(){
     currentRow++;
     currentCol = 0;
 }
@@ -719,7 +666,7 @@ QCsv& QCsv::operator=(QCsv&& other) noexcept {
         other.filePath.clear();
         other.opened = false;
     }
-    other.deleteLater();
+
     return *this;
 }
 

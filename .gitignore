@@ -3,3 +3,4 @@ test_build/
 *.log
 *.tmp
 *.csv
+.cache/

@@ -50,6 +50,16 @@ namespace CsvUtils {
         }
         return col - 1; // 转为0-based
     }
+
+    static std::pair<QString, int> splitKey(const QString& key) {
+        int i = 0;
+        while (i < key.length() && key[i].isLetter()) {
+            ++i;
+        }
+        QString colPart = key.left(i);
+        int rowPart = key.mid(i).toInt() - 1; // 转为0-based
+        return {colPart, rowPart};
+    }
 }
 
 // CSV解析状态机
@@ -89,8 +99,8 @@ private:
     void insertCell();
     
     // 用于跟踪最大行列
-    int maxRow = 0;
-    int maxCol = 0;
+    int maxRow = 1;
+    int maxCol = 1;
 };
 
 class QTCSV_EXPORT QCsv : public QObject {
@@ -137,6 +147,8 @@ private:
     QMultiMap<QString, QString> searchModel;
     char separator = ',';
     bool opened = false;
+    int maxRow = 1;
+    int maxCol = 1;
 
     mutable int currentRow = 0;
     mutable int currentCol = 0;
@@ -156,8 +168,8 @@ private:
     void closeStream();
     void resetStream();
     bool readNextCell(QString& result);
-    inline void endCell() const;
-    inline void endRow() const;
+    inline void endCell();
+    inline void endRow();
     bool getNextChar(char& ch);
     void apppendToCurrentCell(char ch);
 

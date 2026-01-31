@@ -11,6 +11,11 @@ qtcsv 是一个基于 Qt 框架开发的轻量级 CSV 文件读写与管理库�
 
 qtcsv is a lightweight CSV file read/write and management library developed with the Qt framework. It supports data access using Excel-style keys (e.g., "A1").
 
+#### 注意 | Warning
+这个库在windows系统上存在一定文件读取问题
+
+This library has certain file reading issues on Windows systems
+
 ## 特性 | Features
 
 - 支持以 Excel 单元格风格的键（如 "A1"）访问数据
