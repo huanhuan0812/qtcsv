@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 project(QtCsvTest)
 
 # 查找 Qt6
-find_package(Qt6 REQUIRED COMPONENTS Core)
+find_package(Qt6 REQUIRED COMPONENTS Core Test Concurrent)
 
 # 设置编译选项
 set(CMAKE_CXX_STANDARD 17)
@@ -22,6 +22,8 @@ add_executable(qtcsv_test
 # 链接库
 target_link_libraries(qtcsv_test
     Qt6::Core
+    Qt6::Test
+    Qt6::Concurrent
     QtCsv  # 链接到你的 QtCsv 库
 )
 

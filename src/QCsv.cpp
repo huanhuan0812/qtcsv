@@ -1,81 +1,25 @@
 #include "QCsv.hpp"
 #include <fstream>
 #include <QDebug>
+#include <iostream>
 #include <stdexcept>
 #include <algorithm>
-#include <cstring>
 #include <QFile>
 #include <QSaveFile>
 #include <QtConcurrent/QtConcurrent>
 #include <QFuture>
-#include <vector>
-#include <memory>
+#include <QTextStream>
+#include <QStringBuilder>
 
-QCsv::QCsv(QString filePath, QObject* parent)
-    : QObject(parent), filePath(filePath), opened(false) {
-    
-    open(filePath);
-}
+// ==================== CsvParser 实现 ====================
 
-QCsv::~QCsv() {
-    try {
-        closeStream();
-        if(!opened&& !filePath.isEmpty()) {
-            //save();
-        }
-    } catch (const std::exception& e) {
-        qWarning() << "Error in QCsv destructor: " << e.what();
-    } catch (...) {
-        qWarning() << "Unknown error in QCsv destructor";
-    }
-        
-}
+CsvParser::CsvParser(QHash<QString, QString>& csvModel, 
+                     QMultiMap<QString, QString>& searchModel,
+                     char separator)
+    : csvModel(csvModel), searchModel(searchModel), separator(separator) {}
 
-QCsv::QCsv(QCsv&& other) noexcept
-    : QObject(other.parent()),
-      filePath(std::move(other.filePath)),
-      csvModel(std::move(other.csvModel)),
-      searchModel(std::move(other.searchModel)),
-      separator(other.separator),
-      opened(other.opened),
-      fileStream(std::move(other.fileStream)),
-      currentRow(other.currentRow),
-      currentCol(other.currentCol),
-      currentCell(std::move(other.currentCell)),
-      state(other.state),
-      pendingCR(other.pendingCR),
-      atEnd(other.atEnd) {
-    
-    other.filePath.clear();
-    other.opened = false;
-
-}
-
-void QCsv::open(QString filePath) {
-    if(filePath.isEmpty()) {
-        throw std::runtime_error("File path cannot be empty");
-    }
-    this->filePath = filePath;
-    QFile file(filePath);
-    if (!file.exists()) {
-        // 如果文件不存在，创建一个空文件
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            throw std::runtime_error("Could not create file: " + filePath.toStdString());
-        }
-        file.close();
-    }
-    opened = true;
-}
-
-void QCsv::close() {
-    if (!isOpen()) {
-        throw std::runtime_error("File is not open");
-    }
-    //save();
-    filePath.clear();
-    opened = false;
-    clear();
-    closeStream();
+void CsvParser::resetStatistics() {
+    stats = Statistics{};
 }
 
 void CsvParser::processChar(char ch) {
@@ -86,13 +30,11 @@ void CsvParser::processChar(char ch) {
             } else if (ch == separator) {
                 endCell();
             } else if (ch == '\n') {
-                if (pendingCR) {
-                    // \r\n组合，跳过
-                    pendingCR = false;
-                } else {
+                if (!pendingCR) {
                     endCell();
                     endRow();
                 }
+                pendingCR = false;
             } else if (ch == '\r') {
                 pendingCR = true;
                 endCell();
@@ -112,7 +54,6 @@ void CsvParser::processChar(char ch) {
             
         case STATE_QUOTE_IN_QUOTES:
             if (ch == '"') {
-                // 双引号表示一个引号字符
                 currentCell.append('"');
                 state = STATE_IN_QUOTES;
             } else if (ch == separator) {
@@ -129,13 +70,12 @@ void CsvParser::processChar(char ch) {
                 endRow();
                 state = STATE_NORMAL;
             } else {
-                // 引号结束
                 currentCell.append(ch);
                 state = STATE_NORMAL;
             }
             break;
+            
         case STATE_END_OF_CELL:
-            // 从单元格结束状态恢复到正常状态
             if (ch == separator) {
                 endCell();
             } else if (ch == '\n') {
@@ -150,8 +90,8 @@ void CsvParser::processChar(char ch) {
                 state = STATE_NORMAL;
             }
             break;
+            
         case STATE_END_OF_ROW:
-            // 从行结束状态恢复到正常状态
             if (ch == separator) {
                 endCell();
                 state = STATE_END_OF_CELL;
@@ -168,53 +108,47 @@ void CsvParser::processChar(char ch) {
                 state = STATE_NORMAL;
             }
             break;
-        default:
-            break;
     }
 }
 
 void CsvParser::endCell() {
-    // 记录最大列
-    maxCol = std::max(maxCol, currentCol);
+    stats.maxCol = std::max(stats.maxCol, currentCol);
     
     if (!currentCell.isEmpty()) {
         insertCell();
+        stats.totalCells++;
+    } else {
+        stats.emptyCells++;
     }
+    
     currentCell.clear();
     currentCol++;
 }
 
 void CsvParser::endRow() {
     if (pendingCR) {
-        // 处理单独的\r作为行结束
         if (!currentCell.isEmpty()) {
             endCell();
         }
         pendingCR = false;
     }
     
-    // 记录最大行
-    maxRow = std::max(maxRow, currentRow);
+    stats.maxRow = std::max(stats.maxRow, currentRow);
     
     currentRow++;
     currentCol = 0;
 }
 
 void CsvParser::insertCell() {
-    QString key = QString("%1%2").arg(
-        CsvUtils::numberToColumnRow(currentCol)).arg(currentRow + 1);
+    QString key = CsvUtils::numberToColumnRow(currentCol) % QString::number(currentRow + 1);
     
-    //存储最大行列
-    maxRow = std::max(maxRow, currentRow + 1);
-    maxCol = std::max(maxCol, currentCol + 1);
+    stats.maxRow = std::max(stats.maxRow, currentRow + 1);
+    stats.maxCol = std::max(stats.maxCol, currentCol + 1);
 
-    // 只在单元格不为空时才存储
     if (!currentCell.isEmpty()) {
         csvModel.insert(key, currentCell);
-        // 同时添加到搜索索引
         searchModel.insert(currentCell, key);
     }
-    // 空单元格不会存储在csvModel中
 }
 
 void CsvParser::parse(const char* data, size_t size, bool isFinal) {
@@ -229,18 +163,123 @@ void CsvParser::parse(const char* data, size_t size, bool isFinal) {
 
 void CsvParser::finalize() {
     if (state == STATE_IN_QUOTES) {
-        // 文件在引号中结束，可能格式有问题，但还是处理
         qWarning() << "CSV file ended inside quoted field";
     }
     
-    if (!currentCell.isEmpty()) {
+    if (!currentCell.isEmpty() || state != STATE_NORMAL) {
         endCell();
     }
     
     if (currentCol > 0) {
-        // 最后一行以非换行符结束
         endRow();
     }
+}
+
+// ==================== QCsv 实现 ====================
+
+QCsv::QCsv(QObject* parent) : QObject(parent) {}
+
+QCsv::QCsv(const QString& filePath, QObject* parent)
+    : QObject(parent), filePath(filePath) {
+    try {
+        open(filePath);
+    } catch (const std::exception& e) {
+        emit error(tr("Failed to open file: %1").arg(e.what()));
+    }
+}
+
+QCsv::~QCsv() {
+    try {
+        closeStream();
+    } catch (const std::exception& e) {
+        qWarning() << "Error in QCsv destructor:" << e.what();
+    }
+}
+
+QCsv::QCsv(QCsv&& other) noexcept
+    : QObject(other.parent()),
+      filePath(std::move(other.filePath)),
+      csvModel(std::move(other.csvModel)),
+      searchModel(std::move(other.searchModel)),
+      separator(other.separator),
+      opened(other.opened),
+      fileStream(std::move(other.fileStream)),
+      currentRow(other.currentRow),
+      currentCol(other.currentCol),
+      currentCell(std::move(other.currentCell)),
+      state(other.state),
+      pendingCR(other.pendingCR),
+      atEnd(other.atEnd) {
+    
+    // 完全重置原对象的状态
+    other.opened = false;
+    other.currentRow = 0;
+    other.currentCol = 0;
+    other.currentCell.clear();
+    other.state = CsvParser::STATE_NORMAL;
+    other.pendingCR = false;
+    other.atEnd = true;  // 设置为已结束
+}
+
+QCsv& QCsv::operator=(QCsv&& other) noexcept {
+    if (this != &other) {
+        setParent(other.parent());
+        filePath = std::move(other.filePath);
+        csvModel = std::move(other.csvModel);
+        searchModel = std::move(other.searchModel);
+        separator = other.separator;
+        opened = other.opened;
+        fileStream = std::move(other.fileStream);
+        currentRow = other.currentRow;
+        currentCol = other.currentCol;
+        currentCell = std::move(other.currentCell);
+        state = other.state;
+        pendingCR = other.pendingCR;
+        atEnd = other.atEnd;
+
+        other.filePath.clear();
+        other.opened = false;
+        other.currentRow = 0;
+        other.currentCol = 0;
+        other.currentCell.clear();
+        other.state = CsvParser::STATE_NORMAL;
+        other.pendingCR = false;
+        other.atEnd = true;
+    }
+    return *this;
+}
+
+void QCsv::open(const QString& filePath) {
+    if (filePath.isEmpty()) {
+        throw std::runtime_error("File path cannot be empty");
+    }
+    
+    this->filePath = filePath;
+    QFile file(filePath);
+    
+    if (!file.exists()) {
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            throw std::runtime_error("Could not create file: " + filePath.toStdString());
+        }
+        file.close();
+    }
+    
+    opened = true;
+    emit fileOpened(filePath);
+}
+
+void QCsv::close() {
+    if (!isOpen()) {
+        throw std::runtime_error("File is not open");
+    }
+    opened = false;
+    clear();
+    closeStream();
+    emit fileClosed();
+}
+
+bool QCsv::isOpen() const {
+    return opened && !filePath.isEmpty();
 }
 
 void QCsv::load() {
@@ -248,218 +287,233 @@ void QCsv::load() {
         throw std::runtime_error("File not opened");
     }
     
-    std::ifstream file(filePath.toStdString(), std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         throw std::runtime_error("Could not open file: " + filePath.toStdString());
     }
     
-    // 清空现有数据
     csvModel.clear();
     searchModel.clear();
     
-    // 获取文件大小
-    std::streamsize fileSize = file.tellg();
-    file.seekg(0, std::ios::beg);
-    
-    const size_t CHUNK_SIZE = 1024 * 1024; // 1MB
-    std::vector<char> buffer(CHUNK_SIZE);
+    const qint64 CHUNK_SIZE = 1024 * 1024; // 1MB
+    QByteArray buffer;
+    buffer.reserve(CHUNK_SIZE);
     
     CsvParser parser(csvModel, searchModel, separator);
     
-    while (file) {
-        file.read(buffer.data(), buffer.size());
-        std::streamsize bytesRead = file.gcount();
-        
-        if (bytesRead > 0) {
-            parser.parse(buffer.data(), bytesRead, false);
+    while (!file.atEnd()) {
+        buffer = file.read(CHUNK_SIZE);
+        if (!buffer.isEmpty()) {
+            parser.parse(buffer.constData(), buffer.size(), false);
         }
     }
     
     parser.finalize();
     file.close();
     
+    // 更新最大行列
+    auto stats = parser.getStatistics();
+    maxRow = std::max(1, stats.maxRow);
+    maxCol = std::max(1, stats.maxCol);
+    
     qDebug() << "Loaded" << csvModel.size() << "cells from CSV";
 }
 
-// 添加其他成员函数的实现
-QString QCsv::getValue(const QString& key) const {
-    // 如果键不存在，返回空字符串（表示空单元格）
-    return csvModel.value(key, "");
-}
-
-QList<QString> QCsv::search(QString value) const {
-    return searchModel.values(value);
-}
-
-void QCsv::setValue(const QString& key, const QString& value) {
-    // 获取旧值
-    QString oldValue = csvModel.value(key);
-    
-    if (value.isEmpty()) {
-        // 如果要设置的是空值，则从csvModel中删除该键
-        if (!oldValue.isEmpty()) {
-            csvModel.remove(key);
-            // 同时从搜索索引中移除
-            searchModel.remove(oldValue, key);
-        }
-    } else {
-        // 如果新值非空
-        if (!oldValue.isEmpty()) {
-            // 有旧值，先从搜索索引中移除
-            searchModel.remove(oldValue, key);
-        }
-        // 设置新值
-        csvModel.insert(key, value);
-        // 添加到搜索索引
-        searchModel.insert(value, key);
-
-        // 更新最大行列
-        auto [colPart, rowPart] = CsvUtils::splitKey(key);
-        maxRow = std::max(maxRow, rowPart + 1);
-        maxCol = std::max(maxCol, CsvUtils::columnRowToNumber(colPart) + 1);
-        
-    }
-}
-
-bool QCsv::isOpen() const {
-    return opened && !filePath.isEmpty();
-}
-
-void QCsv::save() {
+bool QCsv::save() {
     if (!isOpen()) {
-        throw std::runtime_error("No file opened for saving");
+        emit error("No file opened for saving");
+        return false;
     }
-    saveAs(filePath);
+    return saveAs(filePath);
 }
 
-void QCsv::saveAs(QString newFilePath) {
+bool QCsv::saveAs(const QString& newFilePath) {
     if (newFilePath.isEmpty()) {
-        throw std::runtime_error("File path cannot be empty for saving");
+        emit error("File path cannot be empty for saving");
+        return false;
     }
     
-    // 写入CSV文件
-    std::ofstream file(newFilePath.toStdString());
-    if (!file.is_open()) {
-        throw std::runtime_error("Could not open file for writing");
+    QFile file(newFilePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        emit error("Could not open file for writing: " + newFilePath);
+        return false;
     }
     
-    for (int row = 1; row <= maxRow; ++row) {
-        for (int col = 1; col <= maxCol; ++col) {
-            // 转换列号回字母
-            QString colStr = CsvUtils::numberToColumnRow(col - 1);
-            QString key = colStr + QString::number(row);
-            
-            // 获取单元格值（如果不存在于csvModel中，则为空）
-            QString value = csvModel.value(key, "");
-            
-            // 需要引号的情况：包含分隔符、引号或换行符
-            bool needsQuotes = value.contains(separator) || 
-                              value.contains('"') || 
-                              value.contains('\n') || 
-                              value.contains('\r');
-            
-            if (needsQuotes) {
-                // 转义引号
-                value.replace("\"", "\"\"");
-                file << "\"" << value.toStdString() << "\"";
-            } else {
-                file << value.toStdString();
-            }
-            
-            if (col < maxCol) {
-                file << separator;
-            }
-        }
-        file << "\n";
-    }
-    
+    QTextStream out(&file);
+
+    out.setEncoding(QStringConverter::Utf8);
+
+    bool success = writeToStream(out);
     file.close();
-}
-
-void QCsv::atomicSave() {
-    atomicSaveAs(filePath);
-}
-
-void QCsv::atomicSaveAs(QString filePath) {
-    if(filePath.isEmpty()) {
-        throw std::runtime_error("File path cannot be empty for atomic save");
+    
+    if (success) {
+        emit fileSaved(newFilePath);
     }
+    
+    return success;
+}
+
+bool QCsv::atomicSave() {
+    return atomicSaveAs(filePath);
+}
+
+bool QCsv::atomicSaveAs(const QString& filePath) {
+    if (filePath.isEmpty()) {
+        emit error("File path cannot be empty for atomic save");
+        return false;
+    }
+    
     QSaveFile saveFile(filePath);
     if (!saveFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        throw std::runtime_error("Could not open file for atomic saving");
+        emit error("Could not open file for atomic saving: " + filePath);
+        return false;
     }
 
-    // 写入CSV文件
     QTextStream out(&saveFile);
-    for (int row = 1; row <= maxRow; ++row) {
-        for (int col = 1; col <= maxCol; ++col) {
-            // 转换列号回字母
-            QString colStr = CsvUtils::numberToColumnRow(col - 1);
-            QString key = colStr + QString::number(row);
 
-            // 获取单元格值（如果不存在于csvModel中，则为空）
-            QString value = csvModel.value(key, "");
+    out.setEncoding(QStringConverter::Utf8);
 
-            // 需要引号的情况：包含分隔符、引号或换行符
-            bool needsQuotes = value.contains(separator) || 
-                              value.contains('"') || 
-                              value.contains('\n') || 
-                              value.contains('\r');
-
-            if (needsQuotes) {
-                // 转义引号
-                value.replace("\"", "\"\"");
-                out << "\"" << value << "\"";
-            } else {
-                out << value;
-            }
-
-            if (col < maxCol) {
-                out << separator;
-            }
-        }
-        out << "\n";
+    bool success = writeToStream(out);
+    
+    if (success && saveFile.commit()) {
+        emit fileSaved(filePath);
+        return true;
     }
-    if (!saveFile.commit()) {
-        throw std::runtime_error("Could not commit atomic save");
+    
+    saveFile.cancelWriting();
+    emit error("Could not commit atomic save for: " + filePath);
+    return false;
+}
+
+bool QCsv::writeToStream(QTextStream& out) const {
+    try {
+        for (int row = 1; row <= maxRow; ++row) {
+            for (int col = 1; col <= maxCol; ++col) {
+                QString colStr = CsvUtils::numberToColumnRow(col - 1);
+                QString key = colStr % QString::number(row);
+                QString value = csvModel.value(key);
+                
+                if (CsvUtils::needsQuotes(value, separator)) {
+                    out << '"' << CsvUtils::escapeQuotes(value) << '"';
+                } else {
+                    out << value;
+                }
+
+                if (col < maxCol) {
+                    out << separator;
+                }
+            }
+            out << '\n';
+        }
+        return true;
+    } catch (const std::exception& e) {
+        qWarning() << "Error writing to stream:" << e.what();
+        return false;
     }
 }
 
 void QCsv::clear() {
     csvModel.clear();
     searchModel.clear();
+    maxRow = 1;
+    maxCol = 1;
 }
 
-void QCsv::sync() {
-    QFuture<void> future = QtConcurrent::run([this]() {
-        try {
-            save();
-        } catch (const std::exception& e) {
-            qWarning() << "Error during sync:" << e.what();
-        }
+QFuture<bool> QCsv::sync() {
+    return QtConcurrent::run([this]() {
+        return save();
     });
-    Q_UNUSED(future);
 }
 
 void QCsv::finalize() {
-    save();
-    close();
+    if (save()) {
+        close();
+    }
+}
+
+QString QCsv::getValue(const QString& key) const {
+    return csvModel.value(key);
+}
+
+std::optional<QString> QCsv::tryGetValue(const QString& key) const {
+    auto it = csvModel.find(key);
+    if (it != csvModel.end()) {
+        return *it;
+    }
+    return std::nullopt;
+}
+
+void QCsv::setValue(const QString& key, const QString& value) {
+    QString oldValue = csvModel.value(key);
+    
+    if (value.isEmpty()) {
+        if (!oldValue.isEmpty()) {
+            csvModel.remove(key);
+            removeFromSearch(oldValue, key);
+        }
+    } else {
+        if (!oldValue.isEmpty()) {
+            removeFromSearch(oldValue, key);
+        }
+        csvModel.insert(key, value);
+        searchModel.insert(value, key);
+        updateMaxRowCol(key);
+    }
+    
+    if (oldValue != value) {
+        emit dataChanged(key, oldValue, value);
+    }
+}
+
+void QCsv::setValues(const QHash<QString, QString>& values) {
+    for (auto it = values.begin(); it != values.end(); ++it) {
+        setValue(it.key(), it.value());
+    }
+}
+
+void QCsv::removeFromSearch(const QString& value, const QString& key) {
+    auto [begin, end] = searchModel.equal_range(key);
+for (auto it = begin; it != end; ) {
+    if (it.value() == key) {
+        it = searchModel.erase(it);
+    } else {
+        ++it;
+    }
+}
+}
+
+void QCsv::updateMaxRowCol(const QString& key) {
+    auto [colPart, rowPart] = CsvUtils::splitKey(key);
+    maxRow = std::max(maxRow, rowPart + 1);
+    maxCol = std::max(maxCol, CsvUtils::columnRowToNumber(colPart) + 1);
+}
+
+QList<QString> QCsv::search(const QString& value) const {
+    return searchModel.values(value);
+}
+
+QList<QString> QCsv::searchByPrefix(const QString& prefix) const {
+    QList<QString> results;
+    if (prefix.isEmpty()) return results;
+    
+    auto it = searchModel.lowerBound(prefix);
+    while (it != searchModel.end() && it.key().startsWith(prefix)) {
+        results.append(it.value());
+        ++it;
+    }
+    return results;
 }
 
 void QCsv::setSeparator(char sep) {
     if (sep != separator) {
         separator = sep;
-        // 如果已经加载了数据，需要重新解析
         if (!csvModel.isEmpty()) {
             qWarning() << "Separator changed after loading data. Call load() again.";
         }
     }
 }
 
-char QCsv::getSeparator() const {
-    return separator;
-}
-
+// 流式读取操作符
 QCsv& operator>>(QCsv& csv, QString& value) {
     if (!csv.fileStream) {
         csv.openStream();
@@ -479,31 +533,20 @@ QCsv& operator>>(QCsv& csv, QString& value) {
     return csv;
 }
 
+// 流式读取辅助方法
 void QCsv::openStream() {
-    if (fileStream) {
-        return;
+    if (fileStream) return;
+    
+    fileStream = std::make_unique<std::ifstream>(
+        filePath.toStdString(), std::ios::binary
+    );
+        
+    if (!fileStream->is_open()) {
+        throw std::runtime_error("Could not open file stream: " + filePath.toStdString());
     }
     
-    try {
-        fileStream = std::make_unique<std::ifstream>(
-            filePath.toStdString(), 
-            std::ios::binary
-        );
-            
-        if (!fileStream->is_open()) {
-            throw std::runtime_error("Could not open file stream: " + filePath.toStdString());
-        }
-            
-        // 分配缓冲区
-        buffer.resize(BUFFER_SIZE);
-        
-        // 设置C++流缓冲区（可选，进一步提升性能）
-        fileStream->rdbuf()->pubsetbuf(nullptr, 0); // 禁用内部缓冲，使用我们的缓冲
-        
-    } catch(...) {
-        fileStream.reset();
-        throw;
-    }
+    buffer.resize(BUFFER_SIZE);
+    fileStream->rdbuf()->pubsetbuf(nullptr, 0);
     
     state = CsvParser::STATE_NORMAL;
     pendingCR = false;
@@ -511,6 +554,7 @@ void QCsv::openStream() {
     currentRow = 0;
     currentCol = 0;
     currentCell.clear();
+    currentCell.reserve(64);
 }
 
 void QCsv::closeStream() {
@@ -518,6 +562,16 @@ void QCsv::closeStream() {
         fileStream->close();
         fileStream.reset();
     }
+}
+
+void QCsv::resetStream() {
+    closeStream();
+    currentRow = 0;
+    currentCol = 0;
+    currentCell.clear();
+    state = CsvParser::STATE_NORMAL;
+    pendingCR = false;
+    atEnd = false;
 }
 
 bool QCsv::getNextChar(char& ch) {
@@ -535,21 +589,20 @@ bool QCsv::getNextChar(char& ch) {
     return true;
 }
 
-void QCsv::apppendToCurrentCell(char ch) {
+void QCsv::appendToCurrentCell(char ch) {
     currentCell.append(ch);
-    if(currentCell.size() > currentCell.capacity() -10) {
+    if (currentCell.size() > currentCell.capacity() - 10) {
         currentCell.reserve(currentCell.size() + 64);
     }
 }
 
-bool QCsv::readNextCell(QString& result){
+bool QCsv::readNextCell(QString& result) {
     if (!fileStream || !fileStream->is_open()) {
         return false;
     }
     
     result.clear();
     currentCell.clear();
-    currentCell.reserve(64); // 预分配一些空间以提高性能
     
     char ch;
     while (getNextChar(ch)) {
@@ -562,14 +615,13 @@ bool QCsv::readNextCell(QString& result){
                     result = currentCell;
                     return true;
                 } else if (ch == '\n') {
-                    if (pendingCR) {
-                        pendingCR = false;
-                    } else {
+                    if (!pendingCR) {
                         endCell();
                         endRow();
                         result = currentCell;
                         return true;
                     }
+                    pendingCR = false;
                 } else if (ch == '\r') {
                     pendingCR = true;
                     endCell();
@@ -577,7 +629,7 @@ bool QCsv::readNextCell(QString& result){
                     result = currentCell;
                     return true;
                 } else {
-                    apppendToCurrentCell(ch);
+                    appendToCurrentCell(ch);
                 }
                 break;
                 
@@ -585,7 +637,7 @@ bool QCsv::readNextCell(QString& result){
                 if (ch == '"') {
                     state = CsvParser::STATE_QUOTE_IN_QUOTES;
                 } else {
-                    apppendToCurrentCell(ch);
+                    appendToCurrentCell(ch);
                 }
                 break;
                 
@@ -609,10 +661,11 @@ bool QCsv::readNextCell(QString& result){
                     result = currentCell;
                     return true;
                 } else {
-                    apppendToCurrentCell(ch);
+                    appendToCurrentCell(ch);
                     state = CsvParser::STATE_NORMAL;
                 }
                 break;
+                
             default:
                 break;
         }
@@ -625,70 +678,38 @@ bool QCsv::readNextCell(QString& result){
         return true;
     }
     
-    return false; // 没有更多数据
+    return false;
 }
 
-inline void QCsv::endCell(){
+void QCsv::endCell() {
     currentCol++;
 }
 
-inline void QCsv::endRow(){
+void QCsv::endRow() {
     currentRow++;
     currentCol = 0;
 }
 
-void QCsv::resetStream() {
-    closeStream();
-    currentRow = 0;
-    currentCol = 0;
-    currentCell.clear();
-    state = CsvParser::STATE_NORMAL;
-    pendingCR = false;
-    atEnd = false;
-}
-
-QCsv& QCsv::operator=(QCsv&& other) noexcept {
-    if (this != &other) {
-        this->setParent(other.parent());
-        filePath = std::move(other.filePath);
-        csvModel = std::move(other.csvModel);
-        searchModel = std::move(other.searchModel);
-        separator = other.separator;
-        opened = other.opened;
-        fileStream = std::move(other.fileStream);
-        currentRow = other.currentRow;
-        currentCol = other.currentCol;
-        currentCell = std::move(other.currentCell);
-        state = other.state;
-        pendingCR = other.pendingCR;
-        atEnd = other.atEnd;
-
-        other.filePath.clear();
-        other.opened = false;
-    }
-
-    return *this;
-}
-
 #if EXPERIMENTAL_FUNC
-
 bool QCsv::seekToCell(int targetRow, int targetCol) {
     if (!fileStream || !fileStream->is_open()) {
         return false;
     }
     
-    if(targetRow < 0 || targetCol < 0) {
+    if (targetRow < 0 || targetCol < 0) {
         return false;
     }
-    if (targetRow < currentRow || (targetRow == currentRow && targetCol < currentCol)) resetStream();
+    
+    if (targetRow < currentRow || (targetRow == currentRow && targetCol < currentCol)) {
+        resetStream();
+    }
     
     QString cellValue;
-
     while (currentRow <= targetRow) {
         currentCol = 0;
         while (currentCol <= targetCol) {
             if (!readNextCell(cellValue)) {
-                return false; // 到达文件末尾
+                return false;
             }
         }
     }

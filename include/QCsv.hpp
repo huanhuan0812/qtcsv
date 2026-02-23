@@ -3,7 +3,12 @@
 #include <QString>
 #include <QHash>
 #include <QMultiMap>
+#include <QStringBuilder>
+#include <memory>
+#include <optional>
+#include <QFuture>
 
+// 导出宏定义
 #if defined(QTCSV_SHARED)
     #if defined(_WIN32)
         #if defined(QTCSV_BUILDING_SHARED)
@@ -18,51 +23,65 @@
             #define QTCSV_EXPORT
         #endif
     #endif
-#elif defined(QTCSV_STATIC)
-    #define QTCSV_EXPORT
 #else
-    // 默认情况下，当作静态库处理
     #define QTCSV_EXPORT
 #endif
 
+// 功能开关
 #define EXPERIMENTAL_FUNC 0
 
-//key example "A1" like in Excel
+// 键格式示例 "A1" 类似Excel
 
-
-// 添加静态辅助函数
 namespace CsvUtils {
-    static QString numberToColumnRow(int number) {
+    // 将数字转换为列字母 (0-based -> A, B, ..., Z, AA, AB, ...)
+    inline QString numberToColumnRow(int number) {
+        if (number < 0) return QString();
+        
         QString column;
-        number++;
-        while (number > 0) {
-            int colNum = (number - 1) % 26;
-            column.prepend(QChar('A' + colNum));
-            number = (number - 1) / 26;
+        int n = number + 1;
+        while (n > 0) {
+            int remainder = (n - 1) % 26;
+            column.prepend(QChar('A' + remainder));
+            n = (n - 1) / 26;
         }
         return column;
     }
     
-    static int columnRowToNumber(const QString& column) {
-        int col = 0;
-        for (int i = 0; i < column.length(); ++i) {
-            col = col * 26 + (column[i].toUpper().toLatin1() - 'A' + 1);
+    // 将列字母转换为数字 (A, B, ..., Z, AA, AB, ... -> 0-based)
+    inline int columnRowToNumber(const QString& column) {
+        int result = 0;
+        for (QChar ch : column) {
+            result = result * 26 + (ch.toUpper().toLatin1() - 'A' + 1);
         }
-        return col - 1; // 转为0-based
+        return result - 1;
     }
 
-    static std::pair<QString, int> splitKey(const QString& key) {
+    // 拆分键为列部分和行号
+    inline std::pair<QString, int> splitKey(const QString& key) {
         int i = 0;
         while (i < key.length() && key[i].isLetter()) {
             ++i;
         }
-        QString colPart = key.left(i);
-        int rowPart = key.mid(i).toInt() - 1; // 转为0-based
-        return {colPart, rowPart};
+        return {key.left(i), key.mid(i).toInt() - 1};
+    }
+    
+    // 检查值是否需要引号包围
+    inline bool needsQuotes(const QString& value, char separator) {
+        return value.contains(separator) || 
+               value.contains('"') || 
+               value.contains('\n') || 
+               value.contains('\r');
+    }
+    
+    // 转义CSV值中的引号
+    inline QString escapeQuotes(const QString& value) {
+        QString result = value;
+        result.replace('"', "\"\"");
+        return result;
     }
 }
 
-// CSV解析状态机
+// CSV解析器状态机
 class CsvParser {
 public:
     enum State {
@@ -73,13 +92,23 @@ public:
         STATE_END_OF_ROW
     };
 
+    struct Statistics {
+        int maxRow = 0;
+        int maxCol = 0;
+        int totalCells = 0;
+        int emptyCells = 0;
+    };
+
     CsvParser(QHash<QString, QString>& csvModel, 
               QMultiMap<QString, QString>& searchModel,
-              char separator)
-        : csvModel(csvModel), searchModel(searchModel), separator(separator) {}
+              char separator);
 
     void parse(const char* data, size_t size, bool isFinal = false);
     void finalize();
+    
+    // 获取统计信息
+    const Statistics& getStatistics() const { return stats; }
+    void resetStatistics();
 
 private:
     QHash<QString, QString>& csvModel;
@@ -90,56 +119,96 @@ private:
     int currentCol = 0;
     QString currentCell;
     State state = STATE_NORMAL;
-    bool pendingCR = false; // 处理\r\n换行符
+    bool pendingCR = false;
+    
+    Statistics stats;
     
     void processChar(char ch);
     void endCell();
     void endRow();
-    
     void insertCell();
-    
-    // 用于跟踪最大行列
-    int maxRow = 1;
-    int maxCol = 1;
 };
 
 class QTCSV_EXPORT QCsv : public QObject {
     Q_OBJECT
+    Q_PROPERTY(QString filePath READ getFilePath WRITE setFilePath)
+    Q_PROPERTY(char separator READ getSeparator WRITE setSeparator)
+    Q_PROPERTY(bool isOpen READ isOpen)
+    Q_PROPERTY(int rowCount READ getRowCount)
+    Q_PROPERTY(int columnCount READ getColumnCount)
+
 public:
-    QCsv(QString filePath, QObject* parent = nullptr);
+    explicit QCsv(QObject* parent = nullptr);
+    explicit QCsv(const QString& filePath, QObject* parent = nullptr);
     ~QCsv();
 
+    // 禁用拷贝，允许移动
+    QCsv(const QCsv&) = delete;
+    QCsv& operator=(const QCsv&) = delete;
     QCsv(QCsv&& other) noexcept;
     QCsv& operator=(QCsv&& other) noexcept;
 
-    void open(QString filePath);
+    // 文件操作
+    void open(const QString& filePath);
     void close();
     bool isOpen() const;
-
+    
+    // 数据加载和保存
     void load();
-    void save();
-    void saveAs(QString filePath);
+    bool save();
+    bool saveAs(const QString& filePath);
+    bool atomicSave();
+    bool atomicSaveAs(const QString& filePath);
     void clear();
-    void sync();
-    void atomicSave();
-    void atomicSaveAs(QString filePath); // 原子保存
-
-    void finalize(); // 保存并关闭文件
-
+    
+    // 异步操作
+    QFuture<bool> sync();
+    void finalize(); // 保存并关闭
+    
+    // 数据访问
     QString getValue(const QString& key) const;
-    QList<QString> search(QString index) const;
-
+    std::optional<QString> tryGetValue(const QString& key) const;
     void setValue(const QString& key, const QString& value);
-
+    
+    // 批量操作
+    void setValues(const QHash<QString, QString>& values);
+    QHash<QString, QString> getAllValues() const { return csvModel; }
+    
+    // 搜索功能
+    QList<QString> search(const QString& value) const;
+    QList<QString> searchByPrefix(const QString& prefix) const;
+    
+    // 属性访问
     void setSeparator(char sep);
-    char getSeparator() const;
-
+    char getSeparator() const { return separator; }
+    void setFilePath(const QString& path) { filePath = path; }
     QString getFilePath() const { return filePath; }
     
-    friend QCsv& operator>>(QCsv& csv, QString& value);
-        
+    // 获取行列信息
+    int getRowCount() const { return maxRow; }
+    int getColumnCount() const { return maxCol; }
     
+    // 流式读取
+    friend QCsv& operator>>(QCsv& csv, QString& value);
+    
+    // 检查单元格是否存在
+    bool contains(const QString& key) const { return csvModel.contains(key); }
+    
+    // 获取所有键
+    QList<QString> keys() const { return csvModel.keys(); }
+    
+    // 获取大小
+    int size() const { return csvModel.size(); }
+    bool isEmpty() const { return csvModel.isEmpty(); }
 
+    void resetStream();
+
+signals:
+    void dataChanged(const QString& key, const QString& oldValue, const QString& newValue);
+    void fileOpened(const QString& filePath);
+    void fileClosed();
+    void fileSaved(const QString& filePath);
+    void error(const QString& errorString);
 
 private:
     QString filePath;
@@ -150,6 +219,7 @@ private:
     int maxRow = 1;
     int maxCol = 1;
 
+    // 流式读取相关
     mutable int currentRow = 0;
     mutable int currentCol = 0;
     mutable QString currentCell;
@@ -163,19 +233,19 @@ private:
     size_t bufferSize = 0;
     const size_t BUFFER_SIZE = 16384; 
     
-    // 用于流式读取的辅助函数
+    // 私有辅助方法
     void openStream();
     void closeStream();
-    void resetStream();
     bool readNextCell(QString& result);
-    inline void endCell();
-    inline void endRow();
+    void endCell();
+    void endRow();
     bool getNextChar(char& ch);
-    void apppendToCurrentCell(char ch);
-
-    //TODO: add these functions if needed
-
-    bool seekToCell(int targetRow, int targetCol);
-    //bool readCell(QString& result) const;
+    void appendToCurrentCell(char ch);
+    void updateMaxRowCol(const QString& key);
+    bool writeToStream(QTextStream& out) const;
+    void removeFromSearch(const QString& value, const QString& key);
     
+#if EXPERIMENTAL_FUNC
+    bool seekToCell(int targetRow, int targetCol);
+#endif
 };

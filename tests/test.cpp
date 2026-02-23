@@ -1,240 +1,582 @@
-// test.cpp
+#include "QCsv.hpp"
 #include <QCoreApplication>
 #include <QDebug>
-#include <QFile>
-#include <QTextStream>
+#include <QDir>
+#include <QElapsedTimer>
+#include <QtConcurrent/QtConcurrent>
+#include <QThread>
 #include <iostream>
-#include "include/QCsv.hpp"
 
-// 测试文件路径
-const QString TEST_FILE = "test_data.csv";
-const QString TEST_FILE_SAVE = "test_data_save.csv";
-const QString TEST_FILE_ATOMIC = "test_data_atomic.csv";
+// 测试辅助宏
+#define TEST_ASSERT(condition, message) \
+    do { \
+        if (!(condition)) { \
+            qCritical() << "❌ TEST FAILED:" << message << " at " << __FILE__ << ":" << __LINE__; \
+            failedTests++; \
+        } else { \
+            qDebug() << "✅ TEST PASSED:" << message; \
+            passedTests++; \
+        } \
+    } while(0)
 
-// 清理测试文件
-void cleanupTestFiles() {
-    QFile::remove(TEST_FILE);
-    QFile::remove(TEST_FILE_SAVE);
-    QFile::remove(TEST_FILE_ATOMIC);
-}
+#define TEST_SECTION(name) \
+    qDebug() << "\n📋 ========== " << name << " ==========";
 
-// 创建测试数据文件
-void createTestCsvFile() {
-    QFile file(TEST_FILE);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QTextStream out(&file);
-        out << "A1,B1,C1\n";
-        out << "A2,B2,C2\n";
-        out << "A3,B3,C3\n";
-        out << "Name,Age,City\n";
-        out << "John,25,New York\n";
-        out << "Alice,30,London\n";
-        out << "Bob,35,Tokyo\n";
-        file.close();
-        qDebug() << "Created test CSV file:" << TEST_FILE;
+class TestHelper {
+public:
+    static QString getTestFilePath(const QString& filename) {
+        return QDir::temp().absoluteFilePath(filename);
+    }
+    
+    static void cleanupTestFile(const QString& filepath) {
+        QFile::remove(filepath);
+    }
+    
+    static void printTestSummary(int passed, int failed) {
+        qDebug() << "\n📊 ========== TEST SUMMARY ==========";
+        qDebug() << "✅ Passed:" << passed;
+        qDebug() << "❌ Failed:" << failed;
+        qDebug() << "📈 Total:" << (passed + failed);
+        qDebug() << "===================================\n";
+    }
+};
+
+// 测试构造函数和基本操作
+void testBasicOperations(int& passedTests, int& failedTests) {
+    TEST_SECTION("基本操作测试");
+    
+    QString testFile = TestHelper::getTestFilePath("test_basic.csv");
+    
+    try {
+        // 测试默认构造函数
+        QCsv csv1;
+        TEST_ASSERT(!csv1.isOpen(), "默认构造函数不应该打开文件");
+        
+        // 测试带路径的构造函数
+        QCsv csv2(testFile);
+        TEST_ASSERT(csv2.isOpen(), "带路径的构造函数应该打开文件");
+        TEST_ASSERT(csv2.getFilePath() == testFile, "文件路径应该正确设置");
+        
+        // 测试打开已存在的文件
+        csv2.close();
+        TEST_ASSERT(!csv2.isOpen(), "close后文件应该关闭");
+        
+        // 测试移动构造函数
+        csv2.open(testFile);
+        QCsv csv3(std::move(csv2));
+        TEST_ASSERT(csv3.isOpen(), "移动后新对象应该打开");
+        TEST_ASSERT(!csv2.isOpen(), "移动后原对象应该关闭");
+        
+        csv3.close();
+        TestHelper::cleanupTestFile(testFile);
+        
+    } catch (const std::exception& e) {
+        TEST_ASSERT(false, QString("异常: %1").arg(e.what()));
     }
 }
 
-// 打印 CSV 内容
-void printCsvContent(const QCsv& csv) {
-    qDebug() << "\n=== CSV Content ===";
+// 测试数据读写
+void testDataReadWrite(int& passedTests, int& failedTests) {
+    TEST_SECTION("数据读写测试");
     
-    // 测试一些已知的单元格
-    QStringList testKeys = {"A1", "B2", "C3", "A4", "B5", "C6"};
+    QString testFile = TestHelper::getTestFilePath("test_rw.csv");
     
-    for (const QString& key : testKeys) {
-        QString value = csv.getValue(key);
-        if (!value.isEmpty()) {
-            qDebug() << key << "=" << value;
-        } else {
-            qDebug() << key << "= (empty)";
+    try {
+        QCsv csv(testFile);
+        
+        // 测试写入数据
+        csv.setValue("A1", "Hello");
+        csv.setValue("B2", "World");
+        csv.setValue("C3", "测试中文");
+        csv.setValue("D4", "Special, chars");
+        csv.setValue("E5", "Quoted \"text\"");
+        
+        TEST_ASSERT(csv.getValue("A1") == "Hello", "应该能读取写入的值");
+        TEST_ASSERT(csv.getValue("B2") == "World", "应该能读取B2的值");
+        TEST_ASSERT(csv.getValue("C3") == "测试中文", "应该支持中文");
+        TEST_ASSERT(csv.contains("D4"), "contains应该返回true");
+        TEST_ASSERT(!csv.contains("Z100"), "不存在的键应该返回false");
+        
+        // 测试空值处理
+        csv.setValue("F6", "");
+        TEST_ASSERT(!csv.contains("F6"), "空值应该被删除");
+        
+        // 测试更新值
+        csv.setValue("A1", "Updated");
+        TEST_ASSERT(csv.getValue("A1") == "Updated", "值应该被更新");
+        
+        // 测试保存
+        TEST_ASSERT(csv.save(), "保存应该成功");
+        
+        // 重新加载验证
+        QCsv csv2(testFile);
+        csv2.load();
+        
+        TEST_ASSERT(csv2.getValue("A1") == "Updated", "重新加载后A1值正确");
+        TEST_ASSERT(csv2.getValue("B2") == "World", "重新加载后B2值正确");
+        TEST_ASSERT(csv2.getValue("C3") == "测试中文", "重新加载后中文正确");
+        
+        qDebug() << "文件内容:";
+        qDebug() << "  行数:" << csv2.getRowCount();
+        qDebug() << "  列数:" << csv2.getColumnCount();
+        qDebug() << "  单元格数:" << csv2.size();
+        
+        csv.close();
+        TestHelper::cleanupTestFile(testFile);
+        
+    } catch (const std::exception& e) {
+        TEST_ASSERT(false, QString("异常: %1").arg(e.what()));
+    }
+}
+
+// 测试搜索功能
+void testSearch(int& passedTests, int& failedTests) {
+    TEST_SECTION("搜索功能测试");
+    
+    QString testFile = TestHelper::getTestFilePath("test_search.csv");
+    
+    try {
+        QCsv csv(testFile);
+        
+        // 准备测试数据
+        csv.setValue("A1", "apple");
+        csv.setValue("B1", "banana");
+        csv.setValue("C1", "apple");
+        csv.setValue("A2", "orange");
+        csv.setValue("B2", "apple pie");
+        csv.setValue("C2", "grape");
+        
+        // 测试精确搜索
+        auto results = csv.search("apple");
+        TEST_ASSERT(results.size() == 2, "精确搜索应该找到2个apple");
+        TEST_ASSERT(results.contains("A1"), "A1应该在搜索结果中");
+        TEST_ASSERT(results.contains("C1"), "C1应该在搜索结果中");
+        
+        // 测试前缀搜索
+        auto prefixResults = csv.searchByPrefix("app");
+        TEST_ASSERT(prefixResults.size() == 3, "前缀搜索应该找到3个");
+        
+        // 测试批量设置
+        QHash<QString, QString> batchData;
+        batchData["D1"] = "kiwi";
+        batchData["D2"] = "mango";
+        batchData["D3"] = "lemon";
+        csv.setValues(batchData);
+        
+        TEST_ASSERT(csv.size() == 9, "批量设置后应该有9个单元格");
+        
+        // 测试获取所有键
+        auto keys = csv.keys();
+        TEST_ASSERT(keys.size() == 9, "keys应该返回所有键");
+        
+        csv.close();
+        TestHelper::cleanupTestFile(testFile);
+        
+    } catch (const std::exception& e) {
+        TEST_ASSERT(false, QString("异常: %1").arg(e.what()));
+    }
+}
+
+// 测试分隔符
+void testSeparator(int& passedTests, int& failedTests) {
+    TEST_SECTION("分隔符测试");
+    
+    QString testFile = TestHelper::getTestFilePath("test_sep.csv");
+    
+    try {
+        QCsv csv(testFile);
+        
+        // 测试默认分隔符
+        TEST_ASSERT(csv.getSeparator() == ',', "默认分隔符应该是逗号");
+        
+        // 修改分隔符
+        csv.setSeparator(';');
+        TEST_ASSERT(csv.getSeparator() == ';', "分隔符应该被修改为分号");
+        
+        // 写入数据
+        csv.setValue("A1", "Value1");
+        csv.setValue("B1", "Value2");
+        csv.setValue("C1", "Value;with;semicolon");
+        csv.save();
+        
+        // 重新加载验证
+        QCsv csv2(testFile);
+        csv2.setSeparator(';');
+        csv2.load();
+        
+        TEST_ASSERT(csv2.getValue("A1") == "Value1", "使用分号分隔符读取正确");
+        TEST_ASSERT(csv2.getValue("C1") == "Value;with;semicolon", "包含分隔符的内容应该被引号包围");
+        
+        csv.close();
+        TestHelper::cleanupTestFile(testFile);
+        
+    } catch (const std::exception& e) {
+        TEST_ASSERT(false, QString("异常: %1").arg(e.what()));
+    }
+}
+
+// 测试原子保存
+void testAtomicSave(int& passedTests, int& failedTests) {
+    TEST_SECTION("原子保存测试");
+    
+    QString testFile = TestHelper::getTestFilePath("test_atomic.csv");
+    
+    try {
+        QCsv csv(testFile);
+        
+        csv.setValue("A1", "Atomic");
+        csv.setValue("B1", "Save");
+        csv.setValue("C1", "Test");
+        
+        // 测试原子保存
+        TEST_ASSERT(csv.atomicSave(), "原子保存应该成功");
+        
+        // 验证文件存在
+        QFile file(testFile);
+        TEST_ASSERT(file.exists(), "文件应该存在");
+        
+        // 测试原子另存为
+        QString newFile = TestHelper::getTestFilePath("test_atomic_new.csv");
+        TEST_ASSERT(csv.atomicSaveAs(newFile), "原子另存为应该成功");
+        TEST_ASSERT(QFile::exists(newFile), "新文件应该存在");
+        
+        // 验证内容
+        QCsv csv2(newFile);
+        csv2.load();
+        TEST_ASSERT(csv2.getValue("A1") == "Atomic", "原子保存的内容正确");
+        
+        csv.close();
+        TestHelper::cleanupTestFile(testFile);
+        TestHelper::cleanupTestFile(newFile);
+        
+    } catch (const std::exception& e) {
+        TEST_ASSERT(false, QString("异常: %1").arg(e.what()));
+    }
+}
+
+// 测试异步操作
+void testAsyncOperations(int& passedTests, int& failedTests) {
+    TEST_SECTION("异步操作测试");
+    
+    QString testFile = TestHelper::getTestFilePath("test_async.csv");
+    
+    try {
+        QCsv csv(testFile);
+        
+        // 写入大量数据
+        for (int i = 1; i <= 100; i++) {
+            csv.setValue(QString("A%1").arg(i), QString("Value%1").arg(i));
         }
+        
+        // 测试异步保存
+        QFuture<bool> future = csv.sync();
+        
+        // 等待异步操作完成
+        future.waitForFinished();
+        
+        TEST_ASSERT(future.result(), "异步保存应该成功");
+        
+        // 验证数据
+        QCsv csv2(testFile);
+        csv2.load();
+        TEST_ASSERT(csv2.size() == 100, "异步保存后应该有100个单元格");
+        
+        csv.close();
+        TestHelper::cleanupTestFile(testFile);
+        
+    } catch (const std::exception& e) {
+        TEST_ASSERT(false, QString("异常: %1").arg(e.what()));
+    }
+}
+
+// 测试信号
+class SignalTester : public QObject {
+    Q_OBJECT
+public:
+    bool dataChangedReceived = false;
+    bool fileOpenedReceived = false;
+    bool fileClosedReceived = false;
+    bool fileSavedReceived = false;
+    bool errorReceived = false;
+    QString lastError;
+    
+public slots:
+    void onDataChanged(const QString& key, const QString& oldValue, const QString& newValue) {
+        dataChangedReceived = true;
+        qDebug() << "  信号: dataChanged -" << key << ":" << oldValue << "->" << newValue;
     }
     
-    qDebug() << "=== End of Content ===\n";
-}
-
-// 测试基本功能
-void testBasicFunctions() {
-    qDebug() << "\n=== 测试基本功能 ===";
-    
-    // 测试1: 创建对象并打开文件
-    QCsv csv(TEST_FILE, nullptr);
-    qDebug() << "1. 创建 QCsv 对象";
-    qDebug() << "   文件路径:" << TEST_FILE;
-    qDebug() << "   是否打开:" << csv.isOpen();
-    
-    // 测试2: 加载数据
-    csv.load();
-    qDebug() << "2. 加载数据完成";
-    qDebug() << "   分隔符:" << csv.getSeparator();
-    
-    // 测试3: 获取值
-    QString value = csv.getValue("B2");
-    qDebug() << "3. 获取单元格 B2 的值:" << value;
-    
-    // 测试4: 搜索功能
-    QList<QString> searchResults = csv.search("2");
-    qDebug() << "4. 搜索包含 '2' 的单元格:";
-    for (const QString& result : searchResults) {
-        qDebug() << "   -" << result;
+    void onFileOpened(const QString& path) {
+        fileOpenedReceived = true;
+        qDebug() << "  信号: fileOpened -" << path;
     }
     
-    // 测试5: 打印完整内容
-    printCsvContent(csv);
-}
-
-// 测试修改功能
-void testModificationFunctions() {
-    qDebug() << "\n=== 测试修改功能 ===";
-    
-    // 创建新的 CSV 对象
-    QCsv csv(TEST_FILE, nullptr);
-    csv.load();
-    
-    // 测试1: 设置新值
-    qDebug() << "1. 设置单元格 A1 的值为 'TestValue'";
-    csv.setValue("A1", "TestValue");
-    
-    // 验证设置
-    QString newValue = csv.getValue("A1");
-    qDebug() << "   验证 A1 =" << newValue;
-    
-    // 测试2: 保存到新文件
-    qDebug() << "2. 保存到新文件:" << TEST_FILE_SAVE;
-    csv.saveAs(TEST_FILE_SAVE);
-    
-    // 测试3: 原子保存
-    qDebug() << "3. 原子保存到:" << TEST_FILE_ATOMIC;
-    csv.atomicSaveAs(TEST_FILE_ATOMIC);
-    
-    // 测试4: 验证保存的文件
-    QCsv savedCsv(TEST_FILE_SAVE, nullptr);
-    savedCsv.load();
-    QString savedValue = savedCsv.getValue("A1");
-    qDebug() << "   验证保存的文件中 A1 =" << savedValue;
-    
-    // 测试5: 清除数据
-    qDebug() << "4. 清除数据";
-    csv.clear();
-    qDebug() << "   清除后获取 A1:" << csv.getValue("A1");
-}
-
-// 测试分隔符功能
-void testSeparatorFunctions() {
-    qDebug() << "\n=== 测试分隔符功能 ===";
-    
-    // 创建使用不同分隔符的 CSV 文件
-    QString semicolonFile = "test_semicolon.csv";
-    QFile file(semicolonFile);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QTextStream out(&file);
-        out << "A1;B1;C1\n";
-        out << "A2;B2;C2\n";
-        out << "X;Y;Z\n";
-        file.close();
+    void onFileClosed() {
+        fileClosedReceived = true;
+        qDebug() << "  信号: fileClosed";
     }
     
-    QCsv csv(semicolonFile, nullptr);
+    void onFileSaved(const QString& path) {
+        fileSavedReceived = true;
+        qDebug() << "  信号: fileSaved -" << path;
+    }
     
-    // 测试1: 默认分隔符
-    qDebug() << "1. 默认分隔符:" << csv.getSeparator();
+    void onError(const QString& error) {
+        errorReceived = true;
+        lastError = error;
+        qDebug() << "  信号: error -" << error;
+    }
+};
+
+void testSignals(int& passedTests, int& failedTests) {
+    TEST_SECTION("信号测试");
     
-    // 测试2: 设置新分隔符
-    csv.setSeparator(';');
-    qDebug() << "2. 设置分隔符为 ';'";
-    qDebug() << "   新分隔符:" << csv.getSeparator();
+    QString testFile = TestHelper::getTestFilePath("test_signals.csv");
     
-    // 测试3: 加载数据
-    csv.load();
-    
-    // 验证数据是否正确加载
-    QString value = csv.getValue("B2");
-    qDebug() << "3. 使用分号分隔符加载数据";
-    qDebug() << "   B2 的值:" << value;
-    
-    // 清理临时文件
-    QFile::remove(semicolonFile);
+    try {
+        QCsv csv;
+        SignalTester tester;
+        
+        // 连接信号
+        QObject::connect(&csv, &QCsv::dataChanged, &tester, &SignalTester::onDataChanged);
+        QObject::connect(&csv, &QCsv::fileOpened, &tester, &SignalTester::onFileOpened);
+        QObject::connect(&csv, &QCsv::fileClosed, &tester, &SignalTester::onFileClosed);
+        QObject::connect(&csv, &QCsv::fileSaved, &tester, &SignalTester::onFileSaved);
+        QObject::connect(&csv, &QCsv::error, &tester, &SignalTester::onError);
+        
+        // 测试打开信号
+        csv.open(testFile);
+        TEST_ASSERT(tester.fileOpenedReceived, "应该发出fileOpened信号");
+        
+        // 测试数据改变信号
+        csv.setValue("A1", "Signal Test");
+        TEST_ASSERT(tester.dataChangedReceived, "应该发出dataChanged信号");
+        
+        // 测试保存信号
+        csv.save();
+        TEST_ASSERT(tester.fileSavedReceived, "应该发出fileSaved信号");
+        
+        // 测试关闭信号
+        csv.close();
+        TEST_ASSERT(tester.fileClosedReceived, "应该发出fileClosed信号");
+        
+        TestHelper::cleanupTestFile(testFile);
+        
+    } catch (const std::exception& e) {
+        TEST_ASSERT(false, QString("异常: %1").arg(e.what()));
+    }
 }
 
-// 测试文件操作
-void testFileOperations() {
-    qDebug() << "\n=== 测试文件操作 ===";
+// 测试错误处理
+void testErrorHandling(int& passedTests, int& failedTests) {
+    TEST_SECTION("错误处理测试");
     
-    // 测试1: 打开不存在的文件
-    qDebug() << "1. 打开不存在的文件";
-    QCsv csv1("nonexistent.csv", nullptr);
-    qDebug() << "   文件状态:" << csv1.isOpen();
+    try {
+        QCsv csv;
+        SignalTester tester;
+        QObject::connect(&csv, &QCsv::error, &tester, &SignalTester::onError);
+        
+        // 测试打开空路径
+        bool exceptionCaught = false;
+        try {
+            csv.open("");
+        } catch (const std::exception&) {
+            exceptionCaught = true;
+        }
+        TEST_ASSERT(exceptionCaught, "打开空路径应该抛出异常");
+        
+        // 测试未打开文件时保存
+        TEST_ASSERT(!csv.save(), "未打开文件时保存应该返回false");
+        
+        // 测试无效的文件路径
+        csv.setFilePath("/invalid/path/that/does/not/exist.csv");
+        exceptionCaught = false;
+        try {
+            csv.open("/invalid/path/that/does/not/exist.csv");
+        } catch (const std::exception&) {
+            exceptionCaught = true;
+        }
+        TEST_ASSERT(exceptionCaught, "打开无效路径应该抛出异常");
+        
+    } catch (const std::exception& e) {
+        TEST_ASSERT(false, QString("异常: %1").arg(e.what()));
+    }
+}
+
+// 测试性能
+void testPerformance(int& passedTests, int& failedTests) {
+    TEST_SECTION("性能测试");
     
-    // 测试2: 打开存在的文件
-    qDebug() << "2. 打开存在的文件";
-    QCsv csv2(TEST_FILE, nullptr);
-    csv2.open(TEST_FILE);
-    qDebug() << "   文件状态:" << csv2.isOpen();
+    QString testFile = TestHelper::getTestFilePath("test_perf.csv");
     
-    // 测试3: 加载和同步
-    csv2.load();
-    csv2.setValue("C3", "UpdatedValue");
-    qDebug() << "3. 修改后同步到文件";
-    csv2.sync();
+    try {
+        QCsv csv(testFile);
+        QElapsedTimer timer;
+        
+        // 测试写入性能
+        const int DATA_SIZE = 10000;
+        timer.start();
+        
+        for (int i = 0; i < DATA_SIZE; i++) {
+            int row = (i % 1000) + 1;
+            int col = (i / 1000) + 1;
+            QString key = CsvUtils::numberToColumnRow(col) + QString::number(row);
+            csv.setValue(key, QString("Value%1").arg(i));
+        }
+        
+        qint64 writeTime = timer.elapsed();
+        qDebug() << "  写入" << DATA_SIZE << "个单元格耗时:" << writeTime << "ms";
+        qDebug() << "  平均:" << (DATA_SIZE * 1000.0 / writeTime) << "单元格/秒";
+        
+        // 测试保存性能
+        timer.restart();
+        csv.save();
+        qint64 saveTime = timer.elapsed();
+        qDebug() << "  保存耗时:" << saveTime << "ms";
+        
+        // 测试加载性能
+        QCsv csv2(testFile);
+        timer.restart();
+        csv2.load();
+        qint64 loadTime = timer.elapsed();
+        qDebug() << "  加载耗时:" << loadTime << "ms";
+        
+        TEST_ASSERT(csv2.size() == DATA_SIZE, "加载后数据量应该一致");
+        
+        // 测试搜索性能
+        timer.restart();
+        auto results = csv2.searchByPrefix("Value9");
+        qint64 searchTime = timer.elapsed();
+        qDebug() << "  搜索耗时:" << searchTime << "ms";
+        qDebug() << "  搜索结果数:" << results.size();
+        
+        csv.close();
+        TestHelper::cleanupTestFile(testFile);
+        
+    } catch (const std::exception& e) {
+        TEST_ASSERT(false, QString("异常: %1").arg(e.what()));
+    }
+}
+
+// 测试边缘情况
+void testEdgeCases(int& passedTests, int& failedTests) {
+    TEST_SECTION("边缘情况测试");
     
-    // 测试4: 关闭文件
-    qDebug() << "4. 关闭文件";
-    csv2.close();
-    qDebug() << "   关闭后状态:" << csv2.isOpen();
+    QString testFile = TestHelper::getTestFilePath("test_edge.csv");
     
-    // 测试5: finalize 操作
-    qDebug() << "5. 测试 finalize 操作";
-    QCsv csv3(TEST_FILE, nullptr);
-    csv3.load();
-    csv3.setValue("A2", "FinalizedValue");
-    csv3.finalize();
-    qDebug() << "   finalize 完成";
+    try {
+        QCsv csv(testFile);
+        
+        // 测试空单元格
+        csv.setValue("A1", "");
+        TEST_ASSERT(!csv.contains("A1"), "空单元格不应该存储");
+        
+        // 测试特殊字符
+        csv.setValue("A2", "Line\nBreak");
+        csv.setValue("A3", "Comma,Separated");
+        csv.setValue("A4", "Quote\"Inside");
+        csv.setValue("A5", "\"Quoted\"");
+        csv.setValue("A6", "\r\n\t");
+        
+        csv.save();
+        
+        // 重新加载验证
+        QCsv csv2(testFile);
+        csv2.load();
+        
+        TEST_ASSERT(csv2.getValue("A2") == "Line\nBreak", "应该支持换行符");
+        TEST_ASSERT(csv2.getValue("A3") == "Comma,Separated", "应该支持逗号");
+        TEST_ASSERT(csv2.getValue("A4") == "Quote\"Inside", "应该支持引号");
+        
+        // 测试超大单元格
+        QString largeData(10000, 'X');
+        csv2.setValue("Z1000", largeData);
+        TEST_ASSERT(csv2.getValue("Z1000").size() == 10000, "应该支持大单元格");
+        
+        // 测试移动操作
+        QCsv csv3 = std::move(csv2);
+        TEST_ASSERT(!csv2.isOpen(), "移动后原对象应该无效");
+        TEST_ASSERT(csv3.isOpen(), "新对象应该有效");
+        TEST_ASSERT(csv3.getValue("A2") == "Line\nBreak", "数据应该被移动");
+        
+        csv.close();
+        TestHelper::cleanupTestFile(testFile);
+        
+    } catch (const std::exception& e) {
+        TEST_ASSERT(false, QString("异常: %1").arg(e.what()));
+    }
+}
+
+// 测试流式读取
+void testStreaming(int& passedTests, int& failedTests) {
+    TEST_SECTION("流式读取测试");
+    
+    QString testFile = TestHelper::getTestFilePath("test_stream.csv");
+    
+    try {
+        // 准备测试数据
+        {
+            QCsv writer(testFile);
+            for (int i = 1; i <= 100; i++) {
+                writer.setValue(QString("A%1").arg(i), QString("Value%1").arg(i));
+            }
+            writer.save();
+        }
+        
+        // 测试流式读取
+        QCsv reader(testFile);
+        QString value;
+        int count = 0;
+        
+        for(int i = 1; i <= 100; i++) {
+            reader >> value;
+            TEST_ASSERT(value.startsWith("Value"), "读取的值应该以Value开头");
+            count++;
+        }
+        
+        TEST_ASSERT(count >= 100, "应该读取至少100个单元格");
+        qDebug() << "  流式读取了" << count << "个单元格";
+        
+        // 测试重置流
+        reader.resetStream();
+        QString firstValue;
+        reader >> firstValue;
+        TEST_ASSERT(!firstValue.isEmpty(), "重置后应该能重新读取");
+        
+        TestHelper::cleanupTestFile(testFile);
+        
+    } catch (const std::exception& e) {
+        TEST_ASSERT(false, QString("异常: %1").arg(e.what()));
+    }
 }
 
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
     
-    qDebug() << "=== QCsv 测试开始 ===";
+    qDebug() << "\n🚀 ========== QCsv 库测试开始 ==========";
+    qDebug() << "Qt版本:" << qVersion();
+    qDebug() << "临时目录:" << QDir::temp().absolutePath();
     
-    // 清理之前的测试文件
-    cleanupTestFiles();
+    int passedTests = 0;
+    int failedTests = 0;
     
-    // 创建测试文件
-    createTestCsvFile();
+    // 运行所有测试
+    testBasicOperations(passedTests, failedTests);
+    testDataReadWrite(passedTests, failedTests);
+    testSearch(passedTests, failedTests);
+    testSeparator(passedTests, failedTests);
+    testAtomicSave(passedTests, failedTests);
+    testAsyncOperations(passedTests, failedTests);
+    testSignals(passedTests, failedTests);
+    testErrorHandling(passedTests, failedTests);
+    testPerformance(passedTests, failedTests);
+    testEdgeCases(passedTests, failedTests);
+    testStreaming(passedTests, failedTests);
     
-    try {
-        // 运行各个测试
-        testBasicFunctions();
-        testModificationFunctions();
-        testSeparatorFunctions();
-        testFileOperations();
-        
-        qDebug() << "\n=== 所有测试完成 ===";
-        qDebug() << "测试文件已创建:";
-        qDebug() << "1." << TEST_FILE << "(原始测试文件)";
-        qDebug() << "2." << TEST_FILE_SAVE << "(保存测试文件)";
-        qDebug() << "3." << TEST_FILE_ATOMIC << "(原子保存测试文件)";
-        
-        // 询问是否清理测试文件
-        std::cout << "\n是否清理测试文件？(y/n): ";
-        char choice;
-        std::cin >> choice;
-        
-        if (choice == 'y' || choice == 'Y') {
-            cleanupTestFiles();
-            qDebug() << "已清理测试文件";
-        }
-        
-    } catch (const std::exception& e) {
-        qCritical() << "测试过程中发生异常:" << e.what();
-        cleanupTestFiles();
-        return 1;
-    } catch (...) {
-        qCritical() << "测试过程中发生未知异常";
-        cleanupTestFiles();
-        return 1;
-    }
+    // 输出测试总结
+    TestHelper::printTestSummary(passedTests, failedTests);
     
-    return 0;
+    return (failedTests == 0) ? 0 : 1;
 }
+
+#include "test.moc"
