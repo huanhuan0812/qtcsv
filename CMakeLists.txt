@@ -10,6 +10,9 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 包含GNU安装目录
+include(GNUInstallDirs)
+
 # 定义导出宏
 if(WIN32)
     add_definitions(-DQTCSV_EXPORTS)
@@ -42,7 +45,7 @@ set_target_properties(QtCsv PROPERTIES
 # 包含头文件
 target_include_directories(QtCsv PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 # 链接 Qt 模块
@@ -65,6 +68,9 @@ if(QTCSV_WIDGETS)
         src/CsvTableModel.cpp
         src/CsvTableView.cpp
     )
+    
+    # 更新目标的源文件
+    target_sources(QtCsv PRIVATE ${SOURCE_FILES})
 endif()
 
 option(BUILD_TESTING "Build tests" OFF)
@@ -94,11 +100,14 @@ install(TARGETS QtCsv
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    PUBLIC_HEADER DESTINATION include/QtCsv
+    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/QtCsv
 )
 
-# 安装头文件目录
-install(DIRECTORY include/QtCsv DESTINATION include)
+# 安装头文件目录（确保所有头文件都被安装）
+install(DIRECTORY include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h"
+)
 
 # 生成包配置文件
 include(CMakePackageConfigHelpers)
@@ -108,6 +117,7 @@ configure_package_config_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/QtCsvConfig.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/QtCsvConfig.cmake
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/QtCsv
+    PATH_VARS CMAKE_INSTALL_INCLUDEDIR CMAKE_INSTALL_LIBDIR
 )
 
 # 创建版本文件
@@ -131,25 +141,44 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/QtCsv
 )
 
+# 添加pkg-config支持
+if(UNIX)
+    # 配置 pkg-config 文件
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/QtCsv.pc.in
+        ${CMAKE_CURRENT_BINARY_DIR}/QtCsv.pc
+        @ONLY
+    )
+    
+    # 安装 pkg-config 文件
+    install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/QtCsv.pc
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+    )
+endif()
+
+# 可选：安装 CMake 查找模块（如果有的话）
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/FindQtCsv.cmake)
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/FindQtCsv.cmake
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/cmake/Modules
+    )
+endif()
+
 # 添加示例
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples")
     add_subdirectory(examples)
 endif()
 
-
-# 可选：安装 CMake 查找模块
-install(FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/FindQtCsv.cmake
-    DESTINATION ${CMAKE_INSTALL_DATAROOT}/cmake/Modules
-)
-
-# 可选：添加 uninstall 目标
-# configure_file(
-#     "${CMAKE_CURRENT_SOURCE_DIR}/cmake_uninstall.cmake.in"
-#     "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
-#     IMMEDIATE @ONLY
-# )
-
-add_custom_target(uninstall
-    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
-)
+# 添加 uninstall 目标（如果有卸载脚本）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cmake_uninstall.cmake.in")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake_uninstall.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
+        @ONLY
+    )
+    
+    add_custom_target(uninstall
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
+    )
+endif()

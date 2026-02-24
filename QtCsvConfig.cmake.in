@@ -1,10 +1,21 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
+
+# 查找Qt6依赖
 find_dependency(Qt6 COMPONENTS Core)
 
-if(@QTCSV_WIDGETS@)
+# 如果启用了Widgets支持，也需要查找
+set(QTCSV_WIDGETS @QTCSV_WIDGETS@)
+if(QTCSV_WIDGETS)
     find_dependency(Qt6 COMPONENTS Widgets)
 endif()
 
+# 包含目标文件
 include("${CMAKE_CURRENT_LIST_DIR}/QtCsvTargets.cmake")
+
+# 设置版本变量
+set(QtCsv_VERSION @PROJECT_VERSION@)
+
+# 检查必需的组件
+check_required_components(QtCsv)

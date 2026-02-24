@@ -19,6 +19,7 @@ QtCsv is a simple and easy-to-use library for reading and writing CSV files with
 	#include "QCsv.hpp"
 	```
 3. Use the provided classes to read or write CSV files.
+4. see more: [Docs](https://huanhuan0812.github.io/api-docs/en/api/qtcsv/introduction.html)
 
 ### Build
 Use CMake to build the project:
@@ -51,6 +52,7 @@ QtCsv 是一个基于 Qt 的简单易用的 CSV 文件读写库，适用于需�
 	#include "QCsv.hpp"
 	```
 3. 使用库中提供的类进行 CSV 文件的读写。
+4. 更多内容： [文档](https://huanhuan0812.github.io/api-docs/zh/api/qtcsv/introduction.html)
 
 ### 构建
 使用 CMake 构建项目：
