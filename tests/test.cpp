@@ -381,7 +381,7 @@ void testErrorHandling(int& passedTests, int& failedTests) {
         }
         TEST_ASSERT(exceptionCaught, "打开空路径应该抛出异常");
         
-        csv.close();
+        csv.clear();
         // 测试未打开文件时保存
         TEST_ASSERT(!csv.save(), "未打开文件时保存应该返回false");
         

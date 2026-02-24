@@ -175,6 +175,233 @@ void CsvParser::finalize() {
     }
 }
 
+// ==================== Utf8CsvParser 实现 ====================
+
+Utf8CsvParser::Utf8CsvParser(QHash<QString, QString>& csvModel, 
+                             QMultiMap<QString, QString>& searchModel,
+                             char separator)
+    : csvModel(csvModel), searchModel(searchModel), separator(separator) {
+        currentCell.reserve(256);  // 预分配空间
+        utf8Buffer.reserve(8);  
+    }
+
+void Utf8CsvParser::resetStatistics() {
+    stats = Statistics{};
+}
+
+void Utf8CsvParser::processChar(QChar ch) {
+    // 原有 CsvParser 的 processChar 逻辑，但处理 QChar
+    char ascii = ch.toLatin1();
+    
+    switch (state) {
+        case STATE_NORMAL:
+            if (ch == '"') {
+                state = STATE_IN_QUOTES;
+            } else if (ascii == separator) {
+                endCell();
+            } else if (ch == '\n') {
+                if (!pendingCR) {
+                    endCell();
+                    endRow();
+                }
+                pendingCR = false;
+            } else if (ch == '\r') {
+                pendingCR = true;
+                endCell();
+                endRow();
+            } else {
+                currentCell.append(ch);
+            }
+            break;
+            
+        case STATE_IN_QUOTES:
+            if (ch == '"') {
+                state = STATE_QUOTE_IN_QUOTES;
+            } else {
+                currentCell.append(ch);
+            }
+            break;
+            
+        case STATE_QUOTE_IN_QUOTES:
+            if (ch == '"') {
+                currentCell.append('"');
+                state = STATE_IN_QUOTES;
+            } else if (ascii == separator) {
+                endCell();
+                state = STATE_NORMAL;
+            } else if (ch == '\n') {
+                endCell();
+                endRow();
+                state = STATE_NORMAL;
+                pendingCR = false;
+            } else if (ch == '\r') {
+                pendingCR = true;
+                endCell();
+                endRow();
+                state = STATE_NORMAL;
+            } else {
+                currentCell.append(ch);
+                state = STATE_NORMAL;
+            }
+            break;
+            
+        case STATE_END_OF_CELL:
+            if (ascii == separator) {
+                endCell();
+            } else if (ch == '\n') {
+                endRow();
+                state = STATE_END_OF_ROW;
+            } else if (ch == '\r') {
+                pendingCR = true;
+                endRow();
+                state = STATE_END_OF_ROW;
+            } else {
+                currentCell.append(ch);
+                state = STATE_NORMAL;
+            }
+            break;
+            
+        case STATE_END_OF_ROW:
+            if (ascii == separator) {
+                endCell();
+                state = STATE_END_OF_CELL;
+            } else if (ch == '\n') {
+                endRow();
+            } else if (ch == '\r') {
+                pendingCR = true;
+                endRow();
+            } else if (ch == '"') {
+                currentCell.append(ch);
+                state = STATE_IN_QUOTES;
+            } else {
+                currentCell.append(ch);
+                state = STATE_NORMAL;
+            }
+            break;
+    }
+}
+
+void Utf8CsvParser::flushUtf8Char() {
+    if (!utf8Buffer.isEmpty()) {
+        QString str = QString::fromUtf8(utf8Buffer);
+        for (QChar ch : str) {
+            processChar(ch);
+        }
+        utf8Buffer.clear();
+    }
+}
+
+void Utf8CsvParser::processUtf8Char(const char*& ptr, const char* end) {
+    unsigned char c = *ptr++;
+    
+    if (c < 0x80) {
+        // ASCII 字符，直接处理
+        flushUtf8Char();  // 先刷新可能存在的UTF-8缓冲区
+        processChar(QChar::fromLatin1(static_cast<char>(c)));
+        return;
+    }
+    
+    // UTF-8 多字节字符开始
+    utf8Buffer.append(static_cast<char>(c));
+    
+    // 确定UTF-8字符的字节数
+    int bytesNeeded = 1;
+    if ((c & 0xE0) == 0xC0) {
+        bytesNeeded = 2;  // 2字节字符: 110xxxxx 10xxxxxx
+    } else if ((c & 0xF0) == 0xE0) {
+        bytesNeeded = 3;  // 3字节字符: 1110xxxx 10xxxxxx 10xxxxxx
+    } else if ((c & 0xF8) == 0xF0) {
+        bytesNeeded = 4;  // 4字节字符: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+    } else {
+        // 无效的UTF-8起始字节，当作ASCII处理
+        flushUtf8Char();
+        processChar(QChar::fromLatin1(static_cast<char>(c)));
+        return;
+    }
+    
+    // 读取剩余的字节
+    for (int i = 1; i < bytesNeeded && ptr < end; ++i) {
+        utf8Buffer.append(*ptr++);
+    }
+    
+    // 如果收集了完整的UTF-8字符，转换为QChar并处理
+    if (utf8Buffer.size() == bytesNeeded) {
+        flushUtf8Char();
+    }
+    // 否则等待更多数据
+}
+
+void Utf8CsvParser::parse(const char* data, size_t size, bool isFinal) {
+    const char* ptr = data;
+    const char* end = data + size;
+    
+    while (ptr < end) {
+        processUtf8Char(ptr, end);
+    }
+    
+    if (isFinal) {
+        // 处理最后一个可能的UTF-8字符
+        flushUtf8Char();
+        finalize();
+    }
+}
+
+void Utf8CsvParser::finalize() {
+    if (state == STATE_IN_QUOTES) {
+        qWarning() << "CSV file ended inside quoted field";
+    }
+    
+    flushUtf8Char();
+    
+    if (!currentCell.isEmpty() || state != STATE_NORMAL) {
+        endCell();
+    }
+    
+    if (currentCol > 0) {
+        endRow();
+    }
+}
+
+void Utf8CsvParser::endCell() {
+    stats.maxCol = std::max(stats.maxCol, currentCol);
+    
+    if (!currentCell.isEmpty()) {
+        insertCell();
+        stats.totalCells++;
+    } else {
+        stats.emptyCells++;
+    }
+    
+    currentCell.clear();
+    currentCol++;
+}
+
+void Utf8CsvParser::endRow() {
+    if (pendingCR) {
+        if (!currentCell.isEmpty()) {
+            endCell();
+        }
+        pendingCR = false;
+    }
+    
+    stats.maxRow = std::max(stats.maxRow, currentRow);
+    
+    currentRow++;
+    currentCol = 0;
+}
+
+void Utf8CsvParser::insertCell() {
+    QString key = CsvUtils::numberToColumnRow(currentCol) % QString::number(currentRow + 1);
+    
+    stats.maxRow = std::max(stats.maxRow, currentRow + 1);
+    stats.maxCol = std::max(stats.maxCol, currentCol + 1);
+
+    if (!currentCell.isEmpty()) {
+        csvModel.insert(key, currentCell);
+        searchModel.insert(currentCell, key);
+    }
+}
+
 // ==================== QCsv 实现 ====================
 
 QCsv::QCsv(const QString& filePath, QObject* parent)
@@ -286,7 +513,7 @@ void QCsv::load() {
     }
     
     QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!file.open(QIODevice::ReadOnly)) {  // 注意：不要加 Text 标志
         throw std::runtime_error("Could not open file: " + filePath.toStdString());
     }
     
@@ -297,7 +524,8 @@ void QCsv::load() {
     QByteArray buffer;
     buffer.reserve(CHUNK_SIZE);
     
-    CsvParser parser(csvModel, searchModel, separator);
+    // 使用新的 UTF-8 感知解析器
+    Utf8CsvParser parser(csvModel, searchModel, separator);
     
     while (!file.atEnd()) {
         buffer = file.read(CHUNK_SIZE);

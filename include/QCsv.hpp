@@ -129,6 +129,58 @@ private:
     void insertCell();
 };
 
+// 在 QCsv.hpp 中的 CsvParser 类之后添加
+
+// UTF-8感知的CSV解析器
+class Utf8CsvParser {
+public:
+    struct Statistics {
+        int maxRow = 0;
+        int maxCol = 0;
+        int totalCells = 0;
+        int emptyCells = 0;
+    };
+
+    Utf8CsvParser(QHash<QString, QString>& csvModel, 
+                  QMultiMap<QString, QString>& searchModel,
+                  char separator);
+
+    void parse(const char* data, size_t size, bool isFinal = false);
+    void finalize();
+    
+    const Statistics& getStatistics() const { return stats; }
+    void resetStatistics();
+
+private:
+    enum State {
+        STATE_NORMAL,
+        STATE_IN_QUOTES,
+        STATE_QUOTE_IN_QUOTES,
+        STATE_END_OF_CELL,
+        STATE_END_OF_ROW
+    };
+
+    QHash<QString, QString>& csvModel;
+    QMultiMap<QString, QString>& searchModel;
+    char separator;
+    
+    int currentRow = 0;
+    int currentCol = 0;
+    QString currentCell;
+    QByteArray utf8Buffer;  // 用于累积UTF-8字符的缓冲区
+    State state = STATE_NORMAL;
+    bool pendingCR = false;
+    
+    Statistics stats;
+    
+    void processUtf8Char(const char*& ptr, const char* end);
+    void flushUtf8Char();
+    void processChar(QChar ch);
+    void endCell();
+    void endRow();
+    void insertCell();
+};
+
 class QTCSV_EXPORT QCsv : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString filePath READ getFilePath WRITE setFilePath)
