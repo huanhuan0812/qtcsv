@@ -5,7 +5,6 @@
 #include <QElapsedTimer>
 #include <QtConcurrent/QtConcurrent>
 #include <QThread>
-#include <iostream>
 
 // 测试辅助宏
 #define TEST_ASSERT(condition, message) \
@@ -48,9 +47,6 @@ void testBasicOperations(int& passedTests, int& failedTests) {
     QString testFile = TestHelper::getTestFilePath("test_basic.csv");
     
     try {
-        // 测试默认构造函数
-        QCsv csv1;
-        TEST_ASSERT(!csv1.isOpen(), "默认构造函数不应该打开文件");
         
         // 测试带路径的构造函数
         QCsv csv2(testFile);
@@ -334,7 +330,7 @@ void testSignals(int& passedTests, int& failedTests) {
     QString testFile = TestHelper::getTestFilePath("test_signals.csv");
     
     try {
-        QCsv csv;
+        QCsv csv(testFile);
         SignalTester tester;
         
         // 连接信号
@@ -372,7 +368,7 @@ void testErrorHandling(int& passedTests, int& failedTests) {
     TEST_SECTION("错误处理测试");
     
     try {
-        QCsv csv;
+        QCsv csv("");
         SignalTester tester;
         QObject::connect(&csv, &QCsv::error, &tester, &SignalTester::onError);
         
@@ -385,6 +381,7 @@ void testErrorHandling(int& passedTests, int& failedTests) {
         }
         TEST_ASSERT(exceptionCaught, "打开空路径应该抛出异常");
         
+        csv.close();
         // 测试未打开文件时保存
         TEST_ASSERT(!csv.save(), "未打开文件时保存应该返回false");
         

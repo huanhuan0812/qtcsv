@@ -138,7 +138,6 @@ class QTCSV_EXPORT QCsv : public QObject {
     Q_PROPERTY(int columnCount READ getColumnCount)
 
 public:
-    explicit QCsv(QObject* parent = nullptr);
     explicit QCsv(const QString& filePath, QObject* parent = nullptr);
     ~QCsv();
 

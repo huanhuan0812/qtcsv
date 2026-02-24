@@ -177,8 +177,6 @@ void CsvParser::finalize() {
 
 // ==================== QCsv 实现 ====================
 
-QCsv::QCsv(QObject* parent) : QObject(parent) {}
-
 QCsv::QCsv(const QString& filePath, QObject* parent)
     : QObject(parent), filePath(filePath) {
     try {
