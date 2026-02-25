@@ -256,6 +256,63 @@ public:
 
     bool hasNext() const;
 
+    //----------------------------- TODO: 未来功能 -----------------------------
+
+    // 获取列表
+    QStringList getHeaders() const;
+    QStringList getColumnNames() const;
+
+    QList<QString> getRowValues(int row) const;
+    QList<QString> getColumnValues(int col) const;
+
+    int searchHeader(const QString& header) const;
+    int searchColumn(const QString& columnName) const;
+
+    // 导出
+    QJsonObject toJson() const;
+    QByteArray toJsonBytes() const;
+    void exportToJson(const QString& jsonFilePath) const;
+
+    QString toMarkdownTable() const;
+    void exportToMarkdown(const QString& mdFilePath) const;
+
+    QVector<QVector<QString>> toArray() const;
+
+    //导入
+    void importFromJson(const QString& jsonFilePath);
+    void importFromMarkdown(const QString& mdFilePath);
+
+    // 文件元数据
+    QDateTime getLastModified() const;
+    qint64 getFileSize() const;
+    int getLineCount() const;
+
+    // 自定义元数据
+    void setMetadata(const QString& key, const QVariant& value);
+    QVariant getMetadata(const QString& key) const;
+    QMap<QString, QVariant> getAllMetadata() const;
+
+    //大文件处理
+    void loadLargeFile(const QString& filePath);
+    void appendToLargeFile(const QString& filePath, const QHash<QString, QString>& newData);
+
+    // 类型判断
+    bool isNumeric(const QString& value) const;
+    bool isDate(const QString& value, const QString& format = "yyyy-MM-dd") const;
+    bool isBoolean(const QString& value) const;
+
+    // 类型转换
+    std::optional<double> toDouble(const QString& value) const;
+    std::optional<QDate> toDate(const QString& value, const QString& format = "yyyy-MM-dd") const;
+    std::optional<bool> toBoolean(const QString& value) const;
+
+    // 数据验证
+    bool validateCell(const QString& key, std::function<bool(const QString&)> validator) const;
+    bool validateAll(std::function<bool(const QString&, const QString&)> validator) const;
+
+    // ------------------------------ 未来功能 -----------------------------
+
+
 signals:
     void dataChanged(const QString& key, const QString& oldValue, const QString& newValue);
     void fileOpened(const QString& filePath);
