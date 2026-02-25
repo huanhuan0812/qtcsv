@@ -254,6 +254,8 @@ public:
 
     void resetStream();
 
+    bool hasNext() const;
+
 signals:
     void dataChanged(const QString& key, const QString& oldValue, const QString& newValue);
     void fileOpened(const QString& filePath);

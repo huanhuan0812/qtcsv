@@ -916,6 +916,10 @@ void QCsv::endRow() {
     currentCol = 0;
 }
 
+bool QCsv::hasNext() const {
+    return !atEnd;
+}
+
 #if EXPERIMENTAL_FUNC
 bool QCsv::seekToCell(int targetRow, int targetCol) {
     if (!fileStream || !fileStream->is_open()) {
