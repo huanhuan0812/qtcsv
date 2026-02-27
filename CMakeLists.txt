@@ -21,11 +21,15 @@ endif()
 # 添加头文件列表
 set(HEADER_FILES
     include/QCsv.hpp
+    #include/QCsvIE.hpp
+    #include/QCsvAdvance.hpp
 )
 
 # 添加源文件列表
 set(SOURCE_FILES
     src/QCsv.cpp
+    #src/QCsvIE.cpp
+    #src/QCsvAdvance.cpp
 )
 
 # 添加 QtCsv 库
@@ -53,25 +57,6 @@ target_link_libraries(QtCsv PRIVATE
     Qt6::Core
 )
 
-# 可选：如果支持 GUI 功能
-option(QTCSV_WIDGETS "Build QtCsv with widgets support" OFF)
-if(QTCSV_WIDGETS)
-    find_package(Qt6 REQUIRED COMPONENTS Widgets)
-    target_link_libraries(QtCsv PRIVATE Qt6::Widgets)
-    
-    # 添加 GUI 相关文件
-    list(APPEND HEADER_FILES
-        include/QtCsv/CsvTableModel.h
-        include/QtCsv/CsvTableView.h
-    )
-    list(APPEND SOURCE_FILES
-        src/CsvTableModel.cpp
-        src/CsvTableView.cpp
-    )
-    
-    # 更新目标的源文件
-    target_sources(QtCsv PRIVATE ${SOURCE_FILES})
-endif()
 
 option(BUILD_TESTING "Build tests" OFF)
 if(BUILD_TESTING)

@@ -679,7 +679,13 @@ void QCsv::setValue(const QString& key, const QString& value) {
         }
     } else {
         if (!oldValue.isEmpty()) {
-            removeFromSearch(oldValue, key);
+            if (oldValue != value) {            // ✅ 避免值相同时重复操作
+                removeFromSearch(oldValue, key);
+            } else {
+                // 值相同且非空，无需任何操作，可直接返回（或保留现有逻辑但跳过更新）
+                // 注意：如果此处直接返回，需确保 dataChanged 不会被发射
+                return;  // 或者跳过后续插入，因为 csvModel 中已有相同键值对
+            }
         }
         csvModel.insert(key, value);
         searchModel.insert(value, key);
@@ -698,14 +704,15 @@ void QCsv::setValues(const QHash<QString, QString>& values) {
 }
 
 void QCsv::removeFromSearch(const QString& value, const QString& key) {
-    auto [begin, end] = searchModel.equal_range(key);
-for (auto it = begin; it != end; ) {
-    if (it.value() == key) {
-        it = searchModel.erase(it);
-    } else {
-        ++it;
+    auto [begin, end] = searchModel.equal_range(value);
+    for (auto it = begin; it != end; ) {
+        if (it.value() == key) {
+            it = searchModel.erase(it);
+            break;
+        } else {
+            ++it;
+        }
     }
-}
 }
 
 void QCsv::updateMaxRowCol(const QString& key) {
@@ -918,6 +925,244 @@ void QCsv::endRow() {
 
 bool QCsv::hasNext() const {
     return !atEnd;
+}
+
+// ==================== 未经测试的代码 ====================
+void QCsv::enableHeaders(bool enable) {
+    if (headersOn == enable) return;  // 避免不必要的操作
+    headersOn = enable;
+}
+
+// ==================== 列名称 ====================
+void QCsv::setHeaderRow(int row) {
+    if (row < 1) throw std::invalid_argument("Header row number must be >= 1");
+    headerRow = row;
+}
+
+void QCsv::setColumnHeader(int col, const QString& header) {
+    if (col < 1) throw std::invalid_argument("Column number must be >= 1");
+    if(header.isEmpty()) {
+        setValue(CsvUtils::numberToColumnRow(col - 1) + QString::number(headerRow), QString()); // 移除标题行的列标题
+    } else {
+        setValue(CsvUtils::numberToColumnRow(col - 1) + QString::number(headerRow), header); // 设置标题行的列标题
+    }
+}
+
+void QCsv::setColumnHeaders(const QHash<int, QString>& headers) {
+    if (headers.isEmpty()) return;
+    
+    // 验证所有列号
+    for (auto it = headers.begin(); it != headers.end(); ++it) {
+        if (it.key() < 1) {
+            throw std::invalid_argument("Column number must be >= 1");
+        }
+    }
+    
+    // 批量更新
+    QHash<QString, QString> batchValues;
+    for (auto it = headers.begin(); it != headers.end(); ++it) {
+        QString key = CsvUtils::numberToColumnRow(it.key() - 1) + QString::number(headerRow);
+        batchValues.insert(key, it.value());
+    }
+    
+    // 使用批量设置方法（如果存在）
+    setValues(batchValues);  // 假设有这样的批量方法
+}
+
+QString QCsv::getColumnHeader(int col) const {
+    return csvModel.value(CsvUtils::numberToColumnRow(col - 1) + QString::number(headerRow));
+}
+
+QList<QString> QCsv::getColumnHeaders() const {
+    QList<QString> headers;
+    for (int col = 1; col <= maxCol; ++col) {
+        headers.append(getColumnHeader(col));
+    }
+    return headers;
+}
+
+QStringList QCsv::getColumnHeaderLists() const {
+    QStringList headerList;
+    for (int col = 1; col <= maxCol; ++col) {
+        headerList.append(getColumnHeader(col));
+    }
+    return headerList;
+}
+
+QList<int> QCsv::searchColumnHeader(const QString& header) const {
+    QList<int> results;
+    if (header.isEmpty()) return results;
+    
+    // 获取所有匹配的键
+    auto keys = searchModel.values(header);
+    
+    // 遍历所有匹配的键，找到在标题行的那个
+    for (const QString& key : keys) {
+        auto [colPart, rowPart] = CsvUtils::splitKey(key);
+        if (rowPart  == headerRow - 1) {  // rowPart 是0-based，headerRow是1-based
+            // qDebug() << "Found header:" << header <<"match at key:" << key << "colPart:" << colPart << "rowPart:" << rowPart;
+            results.append(CsvUtils::columnRowToNumber(colPart) + 1);
+        }
+    }
+    std::sort(results.begin(), results.end());
+    return results;
+}
+  
+
+// ==================== 行名称 ====================
+void QCsv::setHeaderColumn(int col) {
+    if (col < 1) throw std::invalid_argument("Header column number must be >= 1");
+    headerCol = col;
+}
+
+void QCsv::setRowHeader(int row, const QString& header) {
+    if (row < 1) throw std::invalid_argument("Row number must be >= 1");
+    if(header.isEmpty()) {
+        setValue(CsvUtils::numberToColumnRow(headerCol - 1) + QString::number(row), QString()); // 移除标题列的行标题
+    } else {
+        setValue(CsvUtils::numberToColumnRow(headerCol - 1) + QString::number(row), header); // 设置标题列的行标题
+    }
+}
+
+void QCsv::setRowHeaders(const QHash<int, QString>& headers) {
+    if (headers.isEmpty()) return;
+    
+    // 验证所有行号
+    for (auto it = headers.begin(); it != headers.end(); ++it) {
+        if (it.key() < 1) {
+            throw std::invalid_argument("Row number must be >= 1");
+        }
+    }
+    
+    // 批量更新
+    QHash<QString, QString> batchValues;
+    for (auto it = headers.begin(); it != headers.end(); ++it) {
+        QString key = CsvUtils::numberToColumnRow(headerCol - 1) + QString::number(it.key());
+        batchValues.insert(key, it.value());
+    }
+    
+    // 使用批量设置方法（如果存在）
+    setValues(batchValues);  // 假设有这样的批量方法
+}
+
+QString QCsv::getRowHeader(int row) const {
+    return csvModel.value(CsvUtils::numberToColumnRow(headerCol - 1) + QString::number(row));
+}
+
+QList<QString> QCsv::getRowHeaders() const {
+    QList<QString> headers;
+    for (int row = 1; row <= maxRow; ++row) {
+        headers.append(getRowHeader(row));
+    }
+    return headers;
+}
+
+QStringList QCsv::getRowHeaderLists() const {
+    QStringList headerList;
+    for (int row = 1; row <= maxRow; ++row) {
+        headerList.append(getRowHeader(row));
+    }
+    return headerList;
+}
+
+QList<int> QCsv::searchRowHeader(const QString& header) const {
+    QList<int> results;
+    auto keys = searchModel.values(header);  // ✅ 获取所有匹配项
+    QString targetCol = CsvUtils::numberToColumnRow(headerCol - 1);
+    
+    for (const QString& key : keys) {
+        auto [colPart, rowPart] = CsvUtils::splitKey(key);
+        if (colPart == targetCol) {
+            results.append(rowPart + 1);
+        }
+    }
+    // 排序
+    std::sort(results.begin(), results.end());
+    return results;
+}
+
+//===================== 文件元数据 =====================
+
+QDateTime QCsv::getLastModified() const {
+    if(filePath.isEmpty()) {
+        throw std::runtime_error("File path is empty, cannot get last modified time");
+    }
+    QFileInfo fileInfo(filePath);
+    return fileInfo.lastModified();
+}
+
+qint64 QCsv::getFileSize() const {
+    if(filePath.isEmpty()) {
+        throw std::runtime_error("File path is empty, cannot get file size");
+    }
+    QFile file(filePath);
+    if (!file.exists()) {
+        throw std::runtime_error("File does not exist: " + filePath.toStdString());
+    }
+    QFileInfo fileInfo(file);
+    qint64 size = fileInfo.size();
+    return size;
+}
+
+QMap<QString, QVariant> QCsv::getAllMetadata() const {
+    if(filePath.isEmpty()) {
+        throw std::runtime_error("File path is empty, cannot get metadata");
+    }
+    QFileInfo fileInfo(filePath);
+    QMap<QString, QVariant> metadata;
+    metadata.insert("lastModified", fileInfo.lastModified());
+    metadata.insert("fileSize", fileInfo.size());
+    metadata.insert("created", fileInfo.birthTime());
+    metadata.insert("isReadable", fileInfo.isReadable());
+    metadata.insert("isWritable", fileInfo.isWritable());
+    metadata.insert("isExecutable", fileInfo.isExecutable());
+    return metadata;
+}
+
+// ==================== 类型判断&&转换 ====================
+
+//判断
+bool QCsv::isNumeric(const QString& value) const {
+    bool ok;
+    value.toDouble(&ok);
+    return ok;
+}
+
+bool QCsv::isDate(const QString& value, const QString& format) const {
+    return QDateTime::fromString(value, format).isValid();
+}
+
+bool QCsv::isBoolean(const QString& value) const {
+    QString lowerValue = value.trimmed().toLower();
+    return lowerValue == "true" || lowerValue == "false" || lowerValue == "1" || lowerValue == "0";
+}
+
+//转换
+std::optional<double> QCsv::toDouble(const QString& value) const {
+    bool ok;
+    double result = value.toDouble(&ok);
+    if (ok) {
+        return result;
+    }
+    return std::nullopt;
+}
+
+std::optional<QDate> QCsv::toDate(const QString& value, const QString& format) const {
+    QDateTime dateTime = QDateTime::fromString(value, format);
+    if (dateTime.isValid()) {
+        return dateTime.date();
+    }
+    return std::nullopt;
+}
+
+std::optional<bool> QCsv::toBoolean(const QString& value) const {
+    QString lowerValue = value.trimmed().toLower();
+    if (lowerValue == "true" || lowerValue == "1") {
+        return true;
+    } else if (lowerValue == "false" || lowerValue == "0") {
+        return false;
+    }
+    return std::nullopt;
 }
 
 #if EXPERIMENTAL_FUNC

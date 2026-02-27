@@ -129,8 +129,6 @@ private:
     void insertCell();
 };
 
-// 在 QCsv.hpp 中的 CsvParser 类之后添加
-
 // UTF-8感知的CSV解析器
 class Utf8CsvParser {
 public:
@@ -256,45 +254,36 @@ public:
 
     bool hasNext() const;
 
-    //----------------------------- TODO: 未来功能 -----------------------------
+    //-------------------------- 未经测试的未来功能 --------------------------
 
-    // 获取列表
-    QStringList getHeaders() const;
-    QStringList getColumnNames() const;
+    // 头部处理
+    void enableHeaders(bool enable);
+    bool headersEnabled() const { return headersOn; }
 
-    QList<QString> getRowValues(int row) const;
-    QList<QString> getColumnValues(int col) const;
+    //列名称
+    void setHeaderRow(int row=1);
+    void setColumnHeader(int col, const QString& header);
+    void setColumnHeaders(const QHash<int, QString>& headers);
+    QList<int> searchColumnHeader(const QString& header) const;
+    QString getColumnHeader(int col) const;
+    QList<QString> getColumnHeaders() const ;
+    QStringList getColumnHeaderLists() const;
+    int getHeaderRow() const { return headerRow; }
 
-    int searchHeader(const QString& header) const;
-    int searchColumn(const QString& columnName) const;
-
-    // 导出
-    QJsonObject toJson() const;
-    QByteArray toJsonBytes() const;
-    void exportToJson(const QString& jsonFilePath) const;
-
-    QString toMarkdownTable() const;
-    void exportToMarkdown(const QString& mdFilePath) const;
-
-    QVector<QVector<QString>> toArray() const;
-
-    //导入
-    void importFromJson(const QString& jsonFilePath);
-    void importFromMarkdown(const QString& mdFilePath);
+    // 行名称
+    void setHeaderColumn(int col=1);
+    void setRowHeader(int row, const QString& header);
+    void setRowHeaders(const QHash<int, QString>& headers);
+    QList<int> searchRowHeader(const QString& header) const;
+    QString getRowHeader(int row) const;
+    QList<QString> getRowHeaders() const ;
+    QStringList getRowHeaderLists() const;
+    int getHeaderCol() const { return headerCol; }
 
     // 文件元数据
     QDateTime getLastModified() const;
     qint64 getFileSize() const;
-    int getLineCount() const;
-
-    // 自定义元数据
-    void setMetadata(const QString& key, const QVariant& value);
-    QVariant getMetadata(const QString& key) const;
     QMap<QString, QVariant> getAllMetadata() const;
-
-    //大文件处理
-    void loadLargeFile(const QString& filePath);
-    void appendToLargeFile(const QString& filePath, const QHash<QString, QString>& newData);
 
     // 类型判断
     bool isNumeric(const QString& value) const;
@@ -306,9 +295,17 @@ public:
     std::optional<QDate> toDate(const QString& value, const QString& format = "yyyy-MM-dd") const;
     std::optional<bool> toBoolean(const QString& value) const;
 
+    //----------------------------- TODO: 未来功能 -----------------------------
+
     // 数据验证
-    bool validateCell(const QString& key, std::function<bool(const QString&)> validator) const;
-    bool validateAll(std::function<bool(const QString&, const QString&)> validator) const;
+    //bool validateCell(const QString& key, std::function<bool(const QString&)> validator) const;
+    //bool validateAll(std::function<bool(const QString&, const QString&)> validator) const;
+
+    
+
+    //大文件处理
+    //void loadLargeFile(const QString& filePath);
+    //void appendToLargeFile(const QString& filePath, const QHash<QString, QString>& newData);
 
     // ------------------------------ 未来功能 -----------------------------
 
@@ -328,6 +325,7 @@ private:
     bool opened = false;
     int maxRow = 1;
     int maxCol = 1;
+    bool headersOn = false;
 
     // 流式读取相关
     mutable int currentRow = 0;
@@ -342,6 +340,10 @@ private:
     size_t bufferPos = 0;
     size_t bufferSize = 0;
     const size_t BUFFER_SIZE = 16384; 
+
+    // 头名称
+    int headerRow = 1;
+    int headerCol = 1;
     
     // 私有辅助方法
     void openStream();

@@ -60,3 +60,14 @@ make
 
 ### 许可证
 详情见 [LICENSE](LICENSE)。
+
+**structure**
+
+```txt
+QCsv/
+├── QCsv.hpp              # 核心接口（当前的）
+├── QCsvAdvanced.hpp     # 高级功能（排序、过滤、统计等）
+├── QCsvIO.hpp           # 导入导出扩展（Excel、SQL、JSON等）
+├── QCsvFormula.hpp      # 公式和计算功能
+├── QCsvUndo.hpp         # 撤销/重做功能
+```
