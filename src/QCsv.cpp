@@ -927,7 +927,6 @@ bool QCsv::hasNext() const {
     return !atEnd;
 }
 
-// ==================== 未经测试的代码 ====================
 void QCsv::enableHeaders(bool enable) {
     if (headersOn == enable) return;  // 避免不必要的操作
     headersOn = enable;

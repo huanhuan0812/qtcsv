@@ -254,8 +254,6 @@ public:
 
     bool hasNext() const;
 
-    //-------------------------- 未经测试的未来功能 --------------------------
-
     // 头部处理
     void enableHeaders(bool enable);
     bool headersEnabled() const { return headersOn; }
