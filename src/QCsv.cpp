@@ -507,6 +507,13 @@ bool QCsv::isOpen() const {
     return opened && !filePath.isEmpty();
 }
 
+//临时解决。--------------------- TODO --------------------
+void QCsv::normalizeLineEndings(QByteArray& data) {
+    // 一次性统一换行符（比 QTextStream 快）
+    data.replace("\r\n", "\n");
+    data.replace('\r', '\n');
+}
+
 void QCsv::load() {
     if (!opened || filePath.isEmpty()) {
         throw std::runtime_error("File not opened");
@@ -529,6 +536,7 @@ void QCsv::load() {
     
     while (!file.atEnd()) {
         buffer = file.read(CHUNK_SIZE);
+        normalizeLineEndings(buffer);
         if (!buffer.isEmpty()) {
             parser.parse(buffer.constData(), buffer.size(), false);
         }
