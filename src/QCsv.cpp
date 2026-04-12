@@ -507,7 +507,7 @@ bool QCsv::isOpen() const {
     return opened && !filePath.isEmpty();
 }
 
-//临时解决。--------------------- TODO --------------------
+//临时解决方案。--------------------- TODO --------------------
 void QCsv::normalizeLineEndings(QByteArray& data) {
     // 一次性统一换行符（比 QTextStream 快）
     data.replace("\r\n", "\n");
