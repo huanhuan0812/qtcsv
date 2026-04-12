@@ -536,7 +536,9 @@ void QCsv::load() {
     
     while (!file.atEnd()) {
         buffer = file.read(CHUNK_SIZE);
+        # ifdef OS_WIN
         normalizeLineEndings(buffer);
+        # endif
         if (!buffer.isEmpty()) {
             parser.parse(buffer.constData(), buffer.size(), false);
         }
