@@ -4,3 +4,4 @@ test_build/
 *.tmp
 *.csv
 .cache/
+.DS_Store
