@@ -355,7 +355,7 @@ private:
     bool writeToStream(QTextStream& out) const;
     void removeFromSearch(const QString& value, const QString& key);
 
-    void normalizeLineEndings(QByteArray& data);
+    // void normalizeLineEndings(QByteArray& data);
     
 #if EXPERIMENTAL_FUNC
     bool seekToCell(int targetRow, int targetCol);

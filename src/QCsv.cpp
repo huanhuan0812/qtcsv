@@ -20,86 +20,111 @@ CsvParser::CsvParser(QHash<QString, QString>& csvModel,
 
 void CsvParser::resetStatistics() {
     stats = Statistics{};
+    state = STATE_NORMAL;
+    pendingCR = false;
+    currentCell.clear();
+    currentRow = 0;
+    currentCol = 0;
 }
 
 void CsvParser::processChar(char ch) {
     switch (state) {
-        case STATE_NORMAL:
+        case STATE_NORMAL: {
             if (ch == '"') {
                 state = STATE_IN_QUOTES;
             } else if (ch == separator) {
                 endCell();
+            } else if (ch == '\r') {
+                // 回车符：结束当前单元格和行
+                endCell();
+                endRow();
+                pendingCR = true;  // 标记可能跟随换行符
             } else if (ch == '\n') {
+                // 换行符：只有在没有前导回车时才处理
                 if (!pendingCR) {
                     endCell();
                     endRow();
                 }
                 pendingCR = false;
-            } else if (ch == '\r') {
-                pendingCR = true;
-                endCell();
-                endRow();
             } else {
                 currentCell.append(ch);
             }
             break;
+        }
             
-        case STATE_IN_QUOTES:
+        case STATE_IN_QUOTES: {
             if (ch == '"') {
                 state = STATE_QUOTE_IN_QUOTES;
             } else {
                 currentCell.append(ch);
             }
             break;
+        }
             
-        case STATE_QUOTE_IN_QUOTES:
+        case STATE_QUOTE_IN_QUOTES: {
             if (ch == '"') {
                 currentCell.append('"');
                 state = STATE_IN_QUOTES;
             } else if (ch == separator) {
                 endCell();
                 state = STATE_NORMAL;
-            } else if (ch == '\n') {
-                endCell();
-                endRow();
-                state = STATE_NORMAL;
-                pendingCR = false;
             } else if (ch == '\r') {
-                pendingCR = true;
+                // 引号后的回车
                 endCell();
                 endRow();
+                pendingCR = true;
+                state = STATE_NORMAL;
+            } else if (ch == '\n') {
+                // 引号后的换行
+                if (!pendingCR) {
+                    endCell();
+                    endRow();
+                }
+                pendingCR = false;
                 state = STATE_NORMAL;
             } else {
                 currentCell.append(ch);
                 state = STATE_NORMAL;
             }
             break;
+        }
             
-        case STATE_END_OF_CELL:
+        case STATE_END_OF_CELL: {
             if (ch == separator) {
                 endCell();
-            } else if (ch == '\n') {
-                endRow();
-                state = STATE_END_OF_ROW;
             } else if (ch == '\r') {
-                pendingCR = true;
+                // 回车符：结束行
                 endRow();
+                pendingCR = true;
+                state = STATE_END_OF_ROW;
+            } else if (ch == '\n') {
+                // 换行符：结束行
+                if (!pendingCR) {
+                    endRow();
+                }
+                pendingCR = false;
                 state = STATE_END_OF_ROW;
             } else {
                 currentCell.append(ch);
                 state = STATE_NORMAL;
             }
             break;
+        }
             
-        case STATE_END_OF_ROW:
+        case STATE_END_OF_ROW: {
             if (ch == separator) {
                 endCell();
                 state = STATE_END_OF_CELL;
-            } else if (ch == '\n') {
-                endRow();
             } else if (ch == '\r') {
-                pendingCR = true;
+                // 连续的回车
                 endRow();
+                pendingCR = true;
+            } else if (ch == '\n') {
+                // 换行符
+                if (!pendingCR) {
+                    endRow();
+                }
+                pendingCR = false;
             } else if (ch == '"') {
                 currentCell.append(ch);
                 state = STATE_IN_QUOTES;
@@ -108,6 +133,7 @@ void CsvParser::processChar(char ch) {
                 state = STATE_NORMAL;
             }
             break;
+        }
     }
 }
 
@@ -140,7 +166,7 @@ void CsvParser::endRow() {
 }
 
 void CsvParser::insertCell() {
-    QString key = CsvUtils::numberToColumnRow(currentCol) % QString::number(currentRow + 1);
+    QString key = CsvUtils::numberToColumnRow(currentCol) + QString::number(currentRow + 1);
     
     stats.maxRow = std::max(stats.maxRow, currentRow + 1);
     stats.maxCol = std::max(stats.maxCol, currentCol + 1);
@@ -162,17 +188,23 @@ void CsvParser::parse(const char* data, size_t size, bool isFinal) {
 }
 
 void CsvParser::finalize() {
-    if (state == STATE_IN_QUOTES) {
-        qWarning() << "CSV file ended inside quoted field";
-    }
-    
+    // 处理最后的单元格
     if (!currentCell.isEmpty() || state != STATE_NORMAL) {
         endCell();
     }
     
-    if (currentCol > 0) {
+    // 处理最后的行
+    if (currentCol > 0 || currentRow > 0) {
         endRow();
     }
+    
+    // 检查是否在引号内结束
+    if (state == STATE_IN_QUOTES) {
+        qWarning() << "CSV file ended inside quoted field";
+    }
+    
+    // 清理状态
+    pendingCR = false;
 }
 
 // ==================== Utf8CsvParser 实现 ====================
@@ -181,95 +213,120 @@ Utf8CsvParser::Utf8CsvParser(QHash<QString, QString>& csvModel,
                              QMultiMap<QString, QString>& searchModel,
                              char separator)
     : csvModel(csvModel), searchModel(searchModel), separator(separator) {
-        currentCell.reserve(256);  // 预分配空间
-        utf8Buffer.reserve(8);  
-    }
+    currentCell.reserve(256);
+    utf8Buffer.reserve(8);
+}
 
 void Utf8CsvParser::resetStatistics() {
     stats = Statistics{};
+    state = STATE_NORMAL;
+    pendingCR = false;
+    currentCell.clear();
+    currentRow = 0;
+    currentCol = 0;
+    utf8Buffer.clear();
 }
 
 void Utf8CsvParser::processChar(QChar ch) {
-    // 原有 CsvParser 的 processChar 逻辑，但处理 QChar
     char ascii = ch.toLatin1();
     
     switch (state) {
-        case STATE_NORMAL:
+        case STATE_NORMAL: {
             if (ch == '"') {
                 state = STATE_IN_QUOTES;
             } else if (ascii == separator) {
                 endCell();
+            } else if (ch == '\r') {
+                // 回车符：结束当前单元格和行
+                endCell();
+                endRow();
+                pendingCR = true;
             } else if (ch == '\n') {
+                // 换行符：只有在没有前导回车时才处理
                 if (!pendingCR) {
                     endCell();
                     endRow();
                 }
                 pendingCR = false;
-            } else if (ch == '\r') {
-                pendingCR = true;
-                endCell();
-                endRow();
             } else {
                 currentCell.append(ch);
             }
             break;
+        }
             
-        case STATE_IN_QUOTES:
+        case STATE_IN_QUOTES: {
             if (ch == '"') {
                 state = STATE_QUOTE_IN_QUOTES;
             } else {
                 currentCell.append(ch);
             }
             break;
+        }
             
-        case STATE_QUOTE_IN_QUOTES:
+        case STATE_QUOTE_IN_QUOTES: {
             if (ch == '"') {
                 currentCell.append('"');
                 state = STATE_IN_QUOTES;
             } else if (ascii == separator) {
                 endCell();
                 state = STATE_NORMAL;
-            } else if (ch == '\n') {
-                endCell();
-                endRow();
-                state = STATE_NORMAL;
-                pendingCR = false;
             } else if (ch == '\r') {
-                pendingCR = true;
+                // 引号后的回车
                 endCell();
                 endRow();
+                pendingCR = true;
+                state = STATE_NORMAL;
+            } else if (ch == '\n') {
+                // 引号后的换行
+                if (!pendingCR) {
+                    endCell();
+                    endRow();
+                }
+                pendingCR = false;
                 state = STATE_NORMAL;
             } else {
                 currentCell.append(ch);
                 state = STATE_NORMAL;
             }
             break;
+        }
             
-        case STATE_END_OF_CELL:
+        case STATE_END_OF_CELL: {
             if (ascii == separator) {
                 endCell();
-            } else if (ch == '\n') {
-                endRow();
-                state = STATE_END_OF_ROW;
             } else if (ch == '\r') {
-                pendingCR = true;
+                // 回车符：结束行
                 endRow();
+                pendingCR = true;
+                state = STATE_END_OF_ROW;
+            } else if (ch == '\n') {
+                // 换行符：结束行
+                if (!pendingCR) {
+                    endRow();
+                }
+                pendingCR = false;
                 state = STATE_END_OF_ROW;
             } else {
                 currentCell.append(ch);
                 state = STATE_NORMAL;
             }
             break;
+        }
             
-        case STATE_END_OF_ROW:
+        case STATE_END_OF_ROW: {
             if (ascii == separator) {
                 endCell();
                 state = STATE_END_OF_CELL;
-            } else if (ch == '\n') {
-                endRow();
             } else if (ch == '\r') {
-                pendingCR = true;
+                // 连续的回车
                 endRow();
+                pendingCR = true;
+            } else if (ch == '\n') {
+                // 换行符
+                if (!pendingCR) {
+                    endRow();
+                }
+                pendingCR = false;
             } else if (ch == '"') {
                 currentCell.append(ch);
                 state = STATE_IN_QUOTES;
@@ -278,6 +335,7 @@ void Utf8CsvParser::processChar(QChar ch) {
                 state = STATE_NORMAL;
             }
             break;
+        }
     }
 }
 
@@ -296,7 +354,7 @@ void Utf8CsvParser::processUtf8Char(const char*& ptr, const char* end) {
     
     if (c < 0x80) {
         // ASCII 字符，直接处理
-        flushUtf8Char();  // 先刷新可能存在的UTF-8缓冲区
+        flushUtf8Char();
         processChar(QChar::fromLatin1(static_cast<char>(c)));
         return;
     }
@@ -307,11 +365,11 @@ void Utf8CsvParser::processUtf8Char(const char*& ptr, const char* end) {
     // 确定UTF-8字符的字节数
     int bytesNeeded = 1;
     if ((c & 0xE0) == 0xC0) {
-        bytesNeeded = 2;  // 2字节字符: 110xxxxx 10xxxxxx
+        bytesNeeded = 2;
     } else if ((c & 0xF0) == 0xE0) {
-        bytesNeeded = 3;  // 3字节字符: 1110xxxx 10xxxxxx 10xxxxxx
+        bytesNeeded = 3;
     } else if ((c & 0xF8) == 0xF0) {
-        bytesNeeded = 4;  // 4字节字符: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+        bytesNeeded = 4;
     } else {
         // 无效的UTF-8起始字节，当作ASCII处理
         flushUtf8Char();
@@ -328,7 +386,6 @@ void Utf8CsvParser::processUtf8Char(const char*& ptr, const char* end) {
     if (utf8Buffer.size() == bytesNeeded) {
         flushUtf8Char();
     }
-    // 否则等待更多数据
 }
 
 void Utf8CsvParser::parse(const char* data, size_t size, bool isFinal) {
@@ -340,26 +397,30 @@ void Utf8CsvParser::parse(const char* data, size_t size, bool isFinal) {
     }
     
     if (isFinal) {
-        // 处理最后一个可能的UTF-8字符
         flushUtf8Char();
         finalize();
     }
 }
 
 void Utf8CsvParser::finalize() {
-    if (state == STATE_IN_QUOTES) {
-        qWarning() << "CSV file ended inside quoted field";
-    }
-    
-    flushUtf8Char();
-    
+    // 处理最后的单元格
     if (!currentCell.isEmpty() || state != STATE_NORMAL) {
         endCell();
     }
     
-    if (currentCol > 0) {
+    // 处理最后的行
+    if (currentCol > 0 || currentRow > 0) {
         endRow();
     }
+    
+    // 检查是否在引号内结束
+    if (state == STATE_IN_QUOTES) {
+        qWarning() << "CSV file ended inside quoted field";
+    }
+    
+    // 清理状态
+    pendingCR = false;
+    utf8Buffer.clear();
 }
 
 void Utf8CsvParser::endCell() {
@@ -391,7 +452,7 @@ void Utf8CsvParser::endRow() {
 }
 
 void Utf8CsvParser::insertCell() {
-    QString key = CsvUtils::numberToColumnRow(currentCol) % QString::number(currentRow + 1);
+    QString key = CsvUtils::numberToColumnRow(currentCol) + QString::number(currentRow + 1);
     
     stats.maxRow = std::max(stats.maxRow, currentRow + 1);
     stats.maxCol = std::max(stats.maxCol, currentCol + 1);
@@ -436,14 +497,13 @@ QCsv::QCsv(QCsv&& other) noexcept
       pendingCR(other.pendingCR),
       atEnd(other.atEnd) {
     
-    // 完全重置原对象的状态
     other.opened = false;
     other.currentRow = 0;
     other.currentCol = 0;
     other.currentCell.clear();
     other.state = CsvParser::STATE_NORMAL;
     other.pendingCR = false;
-    other.atEnd = true;  // 设置为已结束
+    other.atEnd = true;
 }
 
 QCsv& QCsv::operator=(QCsv&& other) noexcept {
@@ -507,12 +567,7 @@ bool QCsv::isOpen() const {
     return opened && !filePath.isEmpty();
 }
 
-//临时解决方案。--------------------- TODO --------------------
-void QCsv::normalizeLineEndings(QByteArray& data) {
-    // 一次性统一换行符（比 QTextStream 快）
-    data.replace("\r\n", "\n");
-    data.replace('\r', '\n');
-}
+// 已移除 normalizeLineEndings 函数 - 现在由改进的状态机处理
 
 void QCsv::load() {
     if (!opened || filePath.isEmpty()) {
@@ -520,7 +575,7 @@ void QCsv::load() {
     }
     
     QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {  // 注意：不要加 Text 标志
+    if (!file.open(QIODevice::ReadOnly)) {
         throw std::runtime_error("Could not open file: " + filePath.toStdString());
     }
     
@@ -531,19 +586,18 @@ void QCsv::load() {
     QByteArray buffer;
     buffer.reserve(CHUNK_SIZE);
     
-    // 使用新的 UTF-8 感知解析器
+    // 使用 UTF-8 感知解析器
     Utf8CsvParser parser(csvModel, searchModel, separator);
+    parser.resetStatistics();
     
     while (!file.atEnd()) {
         buffer = file.read(CHUNK_SIZE);
-        # ifdef OS_WIN
-        normalizeLineEndings(buffer);
-        # endif
         if (!buffer.isEmpty()) {
             parser.parse(buffer.constData(), buffer.size(), false);
         }
     }
     
+    // 完成解析
     parser.finalize();
     file.close();
     
@@ -553,6 +607,7 @@ void QCsv::load() {
     maxCol = std::max(1, stats.maxCol);
     
     qDebug() << "Loaded" << csvModel.size() << "cells from CSV";
+    qDebug() << "Max row:" << maxRow << "Max col:" << maxCol;
 }
 
 bool QCsv::save() {
@@ -576,7 +631,6 @@ bool QCsv::saveAs(const QString& newFilePath) {
     }
     
     QTextStream out(&file);
-
     out.setEncoding(QStringConverter::Utf8);
 
     bool success = writeToStream(out);
@@ -606,7 +660,6 @@ bool QCsv::atomicSaveAs(const QString& filePath) {
     }
 
     QTextStream out(&saveFile);
-
     out.setEncoding(QStringConverter::Utf8);
 
     bool success = writeToStream(out);
@@ -626,7 +679,7 @@ bool QCsv::writeToStream(QTextStream& out) const {
         for (int row = 1; row <= maxRow; ++row) {
             for (int col = 1; col <= maxCol; ++col) {
                 QString colStr = CsvUtils::numberToColumnRow(col - 1);
-                QString key = colStr % QString::number(row);
+                QString key = colStr + QString::number(row);
                 QString value = csvModel.value(key);
                 
                 if (CsvUtils::needsQuotes(value, separator)) {
@@ -689,12 +742,10 @@ void QCsv::setValue(const QString& key, const QString& value) {
         }
     } else {
         if (!oldValue.isEmpty()) {
-            if (oldValue != value) {            // ✅ 避免值相同时重复操作
+            if (oldValue != value) {
                 removeFromSearch(oldValue, key);
             } else {
-                // 值相同且非空，无需任何操作，可直接返回（或保留现有逻辑但跳过更新）
-                // 注意：如果此处直接返回，需确保 dataChanged 不会被发射
-                return;  // 或者跳过后续插入，因为 csvModel 中已有相同键值对
+                return;
             }
         }
         csvModel.insert(key, value);
@@ -776,7 +827,6 @@ QCsv& operator>>(QCsv& csv, QString& value) {
     return csv;
 }
 
-// 流式读取辅助方法
 void QCsv::openStream() {
     if (fileStream) return;
     
@@ -850,11 +900,17 @@ bool QCsv::readNextCell(QString& result) {
     char ch;
     while (getNextChar(ch)) {
         switch (state) {
-            case CsvParser::STATE_NORMAL:
+            case CsvParser::STATE_NORMAL: {
                 if (ch == '"') {
                     state = CsvParser::STATE_IN_QUOTES;
                 } else if (ch == separator) {
                     endCell();
+                    result = currentCell;
+                    return true;
+                } else if (ch == '\r') {
+                    pendingCR = true;
+                    endCell();
+                    endRow();
                     result = currentCell;
                     return true;
                 } else if (ch == '\n') {
@@ -865,26 +921,22 @@ bool QCsv::readNextCell(QString& result) {
                         return true;
                     }
                     pendingCR = false;
-                } else if (ch == '\r') {
-                    pendingCR = true;
-                    endCell();
-                    endRow();
-                    result = currentCell;
-                    return true;
                 } else {
                     appendToCurrentCell(ch);
                 }
                 break;
+            }
                 
-            case CsvParser::STATE_IN_QUOTES:
+            case CsvParser::STATE_IN_QUOTES: {
                 if (ch == '"') {
                     state = CsvParser::STATE_QUOTE_IN_QUOTES;
                 } else {
                     appendToCurrentCell(ch);
                 }
                 break;
+            }
                 
-            case CsvParser::STATE_QUOTE_IN_QUOTES:
+            case CsvParser::STATE_QUOTE_IN_QUOTES: {
                 if (ch == '"') {
                     currentCell.append('"');
                     state = CsvParser::STATE_IN_QUOTES;
@@ -892,22 +944,26 @@ bool QCsv::readNextCell(QString& result) {
                     endCell();
                     result = currentCell;
                     return true;
-                } else if (ch == '\n') {
-                    endCell();
-                    endRow();
-                    result = currentCell;
-                    return true;
                 } else if (ch == '\r') {
                     pendingCR = true;
                     endCell();
                     endRow();
                     result = currentCell;
                     return true;
+                } else if (ch == '\n') {
+                    if (!pendingCR) {
+                        endCell();
+                        endRow();
+                        result = currentCell;
+                        return true;
+                    }
+                    pendingCR = false;
                 } else {
                     appendToCurrentCell(ch);
                     state = CsvParser::STATE_NORMAL;
                 }
                 break;
+            }
                 
             default:
                 break;
@@ -938,7 +994,7 @@ bool QCsv::hasNext() const {
 }
 
 void QCsv::enableHeaders(bool enable) {
-    if (headersOn == enable) return;  // 避免不必要的操作
+    if (headersOn == enable) return;
     headersOn = enable;
 }
 
@@ -951,31 +1007,28 @@ void QCsv::setHeaderRow(int row) {
 void QCsv::setColumnHeader(int col, const QString& header) {
     if (col < 1) throw std::invalid_argument("Column number must be >= 1");
     if(header.isEmpty()) {
-        setValue(CsvUtils::numberToColumnRow(col - 1) + QString::number(headerRow), QString()); // 移除标题行的列标题
+        setValue(CsvUtils::numberToColumnRow(col - 1) + QString::number(headerRow), QString());
     } else {
-        setValue(CsvUtils::numberToColumnRow(col - 1) + QString::number(headerRow), header); // 设置标题行的列标题
+        setValue(CsvUtils::numberToColumnRow(col - 1) + QString::number(headerRow), header);
     }
 }
 
 void QCsv::setColumnHeaders(const QHash<int, QString>& headers) {
     if (headers.isEmpty()) return;
     
-    // 验证所有列号
     for (auto it = headers.begin(); it != headers.end(); ++it) {
         if (it.key() < 1) {
             throw std::invalid_argument("Column number must be >= 1");
         }
     }
     
-    // 批量更新
     QHash<QString, QString> batchValues;
     for (auto it = headers.begin(); it != headers.end(); ++it) {
         QString key = CsvUtils::numberToColumnRow(it.key() - 1) + QString::number(headerRow);
         batchValues.insert(key, it.value());
     }
     
-    // 使用批量设置方法（如果存在）
-    setValues(batchValues);  // 假设有这样的批量方法
+    setValues(batchValues);
 }
 
 QString QCsv::getColumnHeader(int col) const {
@@ -1002,14 +1055,11 @@ QList<int> QCsv::searchColumnHeader(const QString& header) const {
     QList<int> results;
     if (header.isEmpty()) return results;
     
-    // 获取所有匹配的键
     auto keys = searchModel.values(header);
     
-    // 遍历所有匹配的键，找到在标题行的那个
     for (const QString& key : keys) {
         auto [colPart, rowPart] = CsvUtils::splitKey(key);
-        if (rowPart  == headerRow - 1) {  // rowPart 是0-based，headerRow是1-based
-            // qDebug() << "Found header:" << header <<"match at key:" << key << "colPart:" << colPart << "rowPart:" << rowPart;
+        if (rowPart == headerRow - 1) {
             results.append(CsvUtils::columnRowToNumber(colPart) + 1);
         }
     }
@@ -1027,31 +1077,28 @@ void QCsv::setHeaderColumn(int col) {
 void QCsv::setRowHeader(int row, const QString& header) {
     if (row < 1) throw std::invalid_argument("Row number must be >= 1");
     if(header.isEmpty()) {
-        setValue(CsvUtils::numberToColumnRow(headerCol - 1) + QString::number(row), QString()); // 移除标题列的行标题
+        setValue(CsvUtils::numberToColumnRow(headerCol - 1) + QString::number(row), QString());
     } else {
-        setValue(CsvUtils::numberToColumnRow(headerCol - 1) + QString::number(row), header); // 设置标题列的行标题
+        setValue(CsvUtils::numberToColumnRow(headerCol - 1) + QString::number(row), header);
     }
 }
 
 void QCsv::setRowHeaders(const QHash<int, QString>& headers) {
     if (headers.isEmpty()) return;
     
-    // 验证所有行号
     for (auto it = headers.begin(); it != headers.end(); ++it) {
         if (it.key() < 1) {
             throw std::invalid_argument("Row number must be >= 1");
         }
     }
     
-    // 批量更新
     QHash<QString, QString> batchValues;
     for (auto it = headers.begin(); it != headers.end(); ++it) {
         QString key = CsvUtils::numberToColumnRow(headerCol - 1) + QString::number(it.key());
         batchValues.insert(key, it.value());
     }
     
-    // 使用批量设置方法（如果存在）
-    setValues(batchValues);  // 假设有这样的批量方法
+    setValues(batchValues);
 }
 
 QString QCsv::getRowHeader(int row) const {
@@ -1076,7 +1123,7 @@ QStringList QCsv::getRowHeaderLists() const {
 
 QList<int> QCsv::searchRowHeader(const QString& header) const {
     QList<int> results;
-    auto keys = searchModel.values(header);  // ✅ 获取所有匹配项
+    auto keys = searchModel.values(header);
     QString targetCol = CsvUtils::numberToColumnRow(headerCol - 1);
     
     for (const QString& key : keys) {
@@ -1085,7 +1132,6 @@ QList<int> QCsv::searchRowHeader(const QString& header) const {
             results.append(rowPart + 1);
         }
     }
-    // 排序
     std::sort(results.begin(), results.end());
     return results;
 }
@@ -1130,7 +1176,6 @@ QMap<QString, QVariant> QCsv::getAllMetadata() const {
 
 // ==================== 类型判断&&转换 ====================
 
-//判断
 bool QCsv::isNumeric(const QString& value) const {
     bool ok;
     value.toDouble(&ok);
@@ -1146,7 +1191,6 @@ bool QCsv::isBoolean(const QString& value) const {
     return lowerValue == "true" || lowerValue == "false" || lowerValue == "1" || lowerValue == "0";
 }
 
-//转换
 std::optional<double> QCsv::toDouble(const QString& value) const {
     bool ok;
     double result = value.toDouble(&ok);

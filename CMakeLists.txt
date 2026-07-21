@@ -32,6 +32,8 @@ set(SOURCE_FILES
     #src/QCsvAdvance.cpp
 )
 
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/include")
+
 # 添加 QtCsv 库
 add_library(QtCsv SHARED
     ${SOURCE_FILES}
